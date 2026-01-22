@@ -38,6 +38,33 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Lighting = game:GetService("Lighting")
 allToggles = {}
 
+task.spawn(function()
+    local Sound = Instance.new("Sound")
+    Sound.SoundId = "http://www.roblox.com/asset/?id=114127796308571"
+    Sound.Volume = 0.5
+    Sound.Parent = game.Workspace
+
+    Sound:play()
+
+    local Image = Drawing.new("Image")
+    local Screen = workspace.CurrentCamera.ViewportSize
+
+    Image.Data = game:HttpGet("https://cdn.discordapp.com/attachments/1463390019862532210/1463429588649639971/08.png?ex=69727543&is=697123c3&hm=59814217e527edf61d770e892a2195ea515aabeef22dbccad66240ac98174920&")
+    Image.Visible = true
+    Image.Transparency = 1
+    Image.Position = Vector2.new(0,0)
+    Image.Size = Vector2.new(Screen.X,Screen.Y)
+
+    task.wait(1.2)
+
+    for i = 1, 100 do
+        Image.Transparency = 1 - (i / 110)
+        task.wait(0.01)
+    end
+
+    Image:Remove()
+end)
+
 local Settings = {
     ESP = {
         enabled = true,
