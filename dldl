@@ -832,7 +832,7 @@ Theme = {
       Invite = "noinvitelink",
       RememberJoins = true
    },
-   KeySystem = false,
+   KeySystem = true,
    KeySettings = {
    Title = "Key System",
    Subtitle = "discord.gg/TD8xjkF6WK",
