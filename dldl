@@ -1,0 +1,3633 @@
+local G_DEBUG = false
+
+
+getgenv().print = function() end
+getgenv().warn = function() end
+getgenv().error = function() end
+
+local function silenceOutput()
+    if not G_DEBUG then
+        print = function() end
+        warn = function() end
+        error = function() end
+        if rconsoleprint then
+            rconsoleprint = function() end
+            rconsolewarn = function() end
+            rconsoleerr = function() end
+        end
+    end
+end
+
+if not G_DEBUG then
+    silenceOutput()
+end
+
+if not G_DEBUG then 
+    if _G.ScriptExecuted then
+        return
+    end
+    _G.ScriptExecuted = true
+end
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Camera = workspace.CurrentCamera
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Lighting = game:GetService("Lighting")
+allToggles = {}
+
+local Settings = {
+    ESP = {
+        enabled = true,
+        boxes = false,
+        names = false,
+        tracers = false,
+        health = false,
+        teamColor = false,
+        showDistance = false,
+        showHealthNumber = false,
+        maxDistance = 1000,
+        textSize = 8,
+        boxThickness = 1,
+        tracerThickness = 1,
+        transparency = 1,
+        espFPS = 60,
+        boxColor = Color3.fromRGB(255, 255, 255),
+        tracerColor = Color3.fromRGB(255, 255, 255),
+        healthColor = Color3.fromRGB(0, 255, 0),
+        textColor = Color3.fromRGB(255, 255, 255)
+    },
+    
+    SilentAim = {
+        enabled = false,
+        fov = 65,
+        showFOV = false,
+        teamCheck = true,
+        requireGunEquipped = true,
+        wallCheck = true,
+        deathCheck = true,
+        forcefieldCheck = false
+    },
+    
+    Movement = {
+        walkSpeedEnabled = false,
+        walkSpeedValue = 0.09,
+        noclipEnabled = false,
+        infiniteJumpEnabled = false,
+        enhancedFlyEnabled = false,
+        flyStabilizerEnabled = true,
+        runEnabled = false,
+        speed = 4,
+        flyEnabled = false
+    },
+    
+    Misc = {
+        hitboxExpanderEnabled = false,
+        headScale = 0.3,
+        bodyScale = 0.15,
+        antiAim1Enabled = false,
+        antiAim2Enabled = false,
+        fakeLagEnabled = false,
+        autoJumpEnabled = false,
+        antiVoidEnabled = false,
+        ragdollEnabled = false,
+        fovValue = 70,
+        chatSpyEnabled = false,
+        fpsLimit = 500,
+        antiAfkEnabled = false
+    },
+    
+    Map = {
+        fullBrightEnabled = false,
+        fullBrightPercent = 100
+    },
+    
+    AntiMod = {
+        modJoinNotify = true,
+        disableOnModJoin = true,
+        resetOnModJoin = false,
+        scpRoleplayAds = false,
+        scpMagnesiumAds = false,
+        autoLeave = false
+    }
+}
+
+RunEnabled = Settings.Movement.runEnabled
+StepDelay = 0.2 
+Speed = Settings.Movement.speed
+
+perf = {
+    cachedPlayers = {},
+    lastPlayerUpdate = 0,
+    playerUpdateInterval = 0.5,
+    espUpdateThrottle = 0,
+    espFPS = 60,
+    espThrottleInterval = 1,
+    lastAimbotUpdate = 0,
+    aimbotUpdateInterval = 0.016
+}
+GROUP_ID = 5479038
+MODERATOR_RANK_THRESHOLD = 248
+
+local function isModerator(player)
+    if player and Players:FindFirstChild(player.Name) then
+        local success, rank = pcall(function()
+            return player:GetRankInGroup(GROUP_ID)
+        end)
+
+        if success then
+            return rank >= MODERATOR_RANK_THRESHOLD
+        end
+    end
+    return false
+end
+
+local function updatePlayerCache()
+    local currentTime = tick()
+    if currentTime - perf.lastPlayerUpdate < perf.playerUpdateInterval then
+        return perf.cachedPlayers
+    end
+
+    perf.lastPlayerUpdate = currentTime
+    perf.cachedPlayers = Players:GetPlayers()
+    return perf.cachedPlayers
+end
+
+local function getPlayers()
+    return updatePlayerCache()
+end
+
+local function disableAllToggles()
+    for _, toggle in pairs(allToggles) do
+        if toggle.CurrentValue then
+            toggle:Set(false)
+        end
+    end
+end
+
+local InfiniteJumpEnabled = false
+local Connection
+
+classDAndChaosInsurgency = { "Class - D", "Chaos Insurgency" }
+
+local otherTeams = { 
+    "Security Department", 
+    "Mobile Task Force", 
+    "Internal Security Department", 
+    "Administrative Department", 
+    "Intelligence Agency", 
+    "Rapid Response Team", 
+    "Scientific Department", 
+    "Medical Department" 
+}
+
+local Mouse = LocalPlayer:GetMouse()
+local aimbot = {
+    CurrentTarget = nil,
+    IsAiming = false,
+    GunEquipped = false,
+    LastTargetCheck = 0,
+    TargetCheckDelay = 0.01,
+    DeadTargets = {}
+}
+
+local SpeedVariableGlobalForScriptRoleplay = "QUJDREVGRzEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6QUJDREVGRw=="
+
+local detectedMods = {}
+for _, player in ipairs(getPlayers()) do
+    if isModerator(player) then
+        if not detectedMods[player.UserId] then
+            detectedMods[player.UserId] = true
+        end
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    wait(2)
+    if isModerator(player) then
+        if not detectedMods[player.UserId] then
+            detectedMods[player.UserId] = true
+        end
+    end
+end)
+
+local function CreateHighlight()
+    local highlight = Instance.new("Highlight")
+    highlight.FillTransparency = 0.5
+    highlight.OutlineTransparency = 0
+    highlight.FillColor = Color3.fromRGB(255, 0, 0)
+    highlight.OutlineColor = Color3.fromRGB(255, 0, 0)
+    highlight.Enabled = false
+    highlight.Parent = game:GetService("CoreGui")
+    return highlight
+end
+
+local HighlightInstance = CreateHighlight()
+
+local function randomString(len)
+    local chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    local s = ''
+    for i = 1, len do
+        local r = math.random(1, #chars)
+        s = s .. chars:sub(r, r)
+    end
+    return s
+end
+
+local Rayfield = loadstring(game:HttpGet("https://raw.githubusercontent.com/axleoislost/Rayfield/refs/heads/main/Rayfield.lua"))()
+if Rayfield and Rayfield.UI then
+    Rayfield.UI.Name = randomString(16)
+
+    local hiddenFolder = game:GetService("CoreGui"):FindFirstChild("_UIH")
+    if not hiddenFolder then
+        hiddenFolder = Instance.new("Folder")
+        hiddenFolder.Name = randomString(12)
+        hiddenFolder.Parent = game:GetService("ReplicatedStorage")
+    end
+    Rayfield.UI.Parent = hiddenFolder
+end
+
+local ESP = {
+    enabled = Settings.ESP.enabled,
+    boxes = Settings.ESP.boxes,
+    names = Settings.ESP.names,
+    tracers = Settings.ESP.tracers,
+    health = Settings.ESP.health,
+    teamColor = Settings.ESP.teamColor,
+    showDistance = Settings.ESP.showDistance,
+    showHealthNumber = Settings.ESP.showHealthNumber,
+    maxDistance = Settings.ESP.maxDistance,
+    boxElements = {},
+    nameElements = {},
+    tracerElements = {},
+    healthElements = {},
+    settings = {
+        textSize = Settings.ESP.textSize,
+        boxThickness = Settings.ESP.boxThickness,
+        tracerThickness = Settings.ESP.tracerThickness,
+        transparency = Settings.ESP.transparency,
+    },
+    colors = {
+        box = Settings.ESP.boxColor,
+        tracer = Settings.ESP.tracerColor,
+        health = Settings.ESP.healthColor,
+        text = Settings.ESP.textColor
+    }
+}
+
+local Vector2new = Vector2.new
+local Vector3new = Vector3.new
+local Color3new = Color3.new
+local mathfloor = math.floor
+local stringformat = string.format
+local tableremove = table.remove
+
+local function formatDistance(distance)
+    return stringformat("%.0f", distance)
+end
+
+local function getHealthColor(health, maxHealth)
+    local healthPercent = health / maxHealth
+    if healthPercent > 0.6 then
+        return Color3.fromRGB(0, 255, 0) 
+    elseif healthPercent > 0.3 then
+        return Color3.fromRGB(255, 165, 0) 
+    else
+        return Color3.fromRGB(255, 0, 0) 
+    end
+end
+
+local function InfiniteJump()
+    local Character = LocalPlayer.Character
+    if not Character then return end
+
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    if not Humanoid then return end
+
+    Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+
+    local RootPart = Character:FindFirstChild("HumanoidRootPart")
+    if RootPart then
+        local jumpPower = 50
+        RootPart.Velocity = Vector3.new(RootPart.Velocity.X, jumpPower, RootPart.Velocity.Z)
+    end
+end
+
+local function cleanupAllESP()
+    for _, player in ipairs(Players:GetPlayers()) do
+        if ESP.boxElements[player] then
+            ESP.boxElements[player].Visible = false
+            ESP.nameElements[player].Visible = false
+            ESP.tracerElements[player].Visible = false
+
+            local healthBar = ESP.healthElements[player]
+            if healthBar then
+                healthBar.background.Visible = false
+                healthBar.fill.Visible = false
+                healthBar.outline.Visible = false
+                healthBar.text.Visible = false
+            end
+        end
+    end
+end
+
+local function cleanupESPElement(player)
+    local elements = ESP.boxElements[player]
+    if elements then
+        ESP.boxElements[player]:Remove()
+        ESP.nameElements[player]:Remove()
+        ESP.tracerElements[player]:Remove()
+
+        local healthElements = ESP.healthElements[player]
+        if healthElements then
+            healthElements.background:Remove()
+            healthElements.fill:Remove()
+            healthElements.outline:Remove()
+            healthElements.text:Remove()
+        end
+
+        ESP.boxElements[player] = nil
+        ESP.nameElements[player] = nil
+        ESP.tracerElements[player] = nil
+        ESP.healthElements[player] = nil
+    end
+end
+
+local function createESPElement(player)
+    if not ESP.boxElements[player] then
+        local box = Drawing.new("Square")
+        box.Thickness = ESP.settings.boxThickness
+        box.Filled = false
+        box.Transparency = ESP.settings.transparency
+        ESP.boxElements[player] = box
+
+        local name = Drawing.new("Text")
+        name.Size = ESP.settings.textSize
+        name.Center = true
+        name.Outline = true
+        name.Transparency = ESP.settings.transparency
+        ESP.nameElements[player] = name
+
+        local tracer = Drawing.new("Line")
+        tracer.Thickness = ESP.settings.tracerThickness
+        tracer.Transparency = ESP.settings.transparency
+        ESP.tracerElements[player] = tracer
+
+        local healthBar = {
+            background = Drawing.new("Square"),
+            fill = Drawing.new("Square"),
+            outline = Drawing.new("Square"),
+            text = Drawing.new("Text")
+        }
+
+        healthBar.background.Filled = true
+        healthBar.background.Color = Color3new(0, 0, 0)
+        healthBar.background.Transparency = ESP.settings.transparency
+
+        healthBar.fill.Filled = true
+        healthBar.fill.Transparency = ESP.settings.transparency
+
+        healthBar.outline.Thickness = 1
+        healthBar.outline.Filled = false
+        healthBar.outline.Color = Color3new(0, 0, 0)
+        healthBar.outline.Transparency = ESP.settings.transparency
+
+        healthBar.text.Size = ESP.settings.textSize
+        healthBar.text.Center = true
+        healthBar.text.Outline = true
+        healthBar.text.Transparency = ESP.settings.transparency
+
+        ESP.healthElements[player] = healthBar
+    end
+end
+
+local function updateESP()
+    if not ESP.enabled then
+        cleanupAllESP()
+        return
+    end
+
+    perf.espUpdateThrottle = perf.espUpdateThrottle + 1
+    if perf.espUpdateThrottle < perf.espThrottleInterval then
+        return
+    end
+    perf.espUpdateThrottle = 0
+
+    local players = getPlayers() 
+    local cameraPos = Camera.CFrame.Position
+    local viewportSize = Camera.ViewportSize
+
+    for _, player in ipairs(players) do
+        if player == LocalPlayer then continue end
+
+        local character = player.Character
+        local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+        local humanoidRootPart = character and character:FindFirstChild("HumanoidRootPart")
+        local primaryPart = character and character.PrimaryPart
+
+        if not (character and humanoidRootPart and humanoid and humanoid.Health > 0) then
+            if ESP.boxElements[player] then
+                ESP.boxElements[player].Visible = false
+                ESP.nameElements[player].Visible = false
+                ESP.tracerElements[player].Visible = false
+                local healthBar = ESP.healthElements[player]
+                if healthBar then
+                    healthBar.background.Visible = false
+                    healthBar.fill.Visible = false
+                    healthBar.outline.Visible = false
+                    healthBar.text.Visible = false
+                end
+            end
+            continue
+        end
+
+        local distance = (cameraPos - humanoidRootPart.Position).Magnitude
+        if distance > ESP.maxDistance then
+            if ESP.boxElements[player] then
+                ESP.boxElements[player].Visible = false
+                ESP.nameElements[player].Visible = false
+                ESP.tracerElements[player].Visible = false
+                local healthBar = ESP.healthElements[player]
+                if healthBar then
+                    healthBar.background.Visible = false
+                    healthBar.fill.Visible = false
+                    healthBar.outline.Visible = false
+                    healthBar.text.Visible = false
+                end
+            end
+            continue
+        end
+
+        local vector, onScreen = Camera:WorldToViewportPoint(humanoidRootPart.Position)
+
+        if onScreen and vector.Z > 0 then
+            createESPElement(player)
+
+            local color = ESP.teamColor and player.TeamColor.Color or ESP.colors.box
+            
+            -- Calculate box size based on full character body dimensions
+            local head = character:FindFirstChild("Head")
+            local rootPart = character:FindFirstChild("HumanoidRootPart")
+            local leftFoot = character:FindFirstChild("LeftFoot") or character:FindFirstChild("LeftLowerLeg")
+            local rightFoot = character:FindFirstChild("RightFoot") or character:FindFirstChild("RightLowerLeg")
+            local leftArm = character:FindFirstChild("LeftHand") or character:FindFirstChild("LeftLowerArm")
+            local rightArm = character:FindFirstChild("RightHand") or character:FindFirstChild("RightLowerArm")
+            
+            local headPos, headOnScreen = nil, false
+            local rootPos = vector
+            local topY, bottomY = vector.Y, vector.Y
+            local leftX, rightX = vector.X, vector.X
+            
+            -- Get head position (top of box)
+            if head then
+                headPos, headOnScreen = Camera:WorldToViewportPoint(head.Position)
+                if headOnScreen then
+                    topY = headPos.Y
+                end
+            end
+            
+            -- Get bottom position (feet)
+            local bottomPart = leftFoot or rightFoot or rootPart
+            if bottomPart then
+                local bottomPos, bottomOnScreen = Camera:WorldToViewportPoint(bottomPart.Position)
+                if bottomOnScreen then
+                    bottomY = bottomPos.Y
+                end
+            end
+            
+            -- Calculate width from left and right body parts
+            if leftArm then
+                local leftPos, leftOnScreen = Camera:WorldToViewportPoint(leftArm.Position)
+                if leftOnScreen then
+                    leftX = math.min(leftX, leftPos.X)
+                end
+            end
+            
+            if rightArm then
+                local rightPos, rightOnScreen = Camera:WorldToViewportPoint(rightArm.Position)
+                if rightOnScreen then
+                    rightX = math.max(rightX, rightPos.X)
+                end
+            end
+            
+            -- Calculate box dimensions
+            local height = math.abs(bottomY - topY)
+            local width = math.abs(rightX - leftX)
+            
+            -- Ensure minimum sizes
+            if height < 20 then
+                height = 80 / math.max(0.1, vector.Z / 100)
+            end
+            if width < 20 then
+                width = height * 0.5
+            end
+            
+            -- Add padding
+            height = height + 10
+            width = width + 10
+            
+            local size = Vector2new(width, height)
+            local position = Vector2new((leftX + rightX) / 2 - size.X / 2, topY - 5)
+
+            if ESP.boxes then
+                local box = ESP.boxElements[player]
+                box.Size = size
+                box.Position = position
+                box.Color = color
+                box.Visible = true
+            else
+                ESP.boxElements[player].Visible = false
+            end
+
+            if ESP.names then
+                local name = ESP.nameElements[player]
+                if ESP.showDistance then
+                    name.Text = player.Name .. ' [' .. formatDistance(distance) .. 'm]'
+                else
+                    name.Text = player.Name
+                end
+                name.Position = Vector2new(vector.X, position.Y - 15)
+                name.Color = ESP.colors.text
+                name.Visible = true
+            else
+                ESP.nameElements[player].Visible = false
+            end
+
+            if ESP.tracers then
+                local tracer = ESP.tracerElements[player]
+                tracer.From = Vector2new(viewportSize.X/2, viewportSize.Y)
+                tracer.To = Vector2new(vector.X, vector.Y)
+                tracer.Color = color
+                tracer.Visible = true
+            else
+                ESP.tracerElements[player].Visible = false
+            end
+
+            if ESP.health then
+                local healthPercent = humanoid.Health / humanoid.MaxHealth
+                local healthBar = ESP.healthElements[player]
+                local barWidth = 4
+
+                healthBar.background.Size = Vector2new(barWidth, size.Y)
+                healthBar.background.Position = Vector2new(position.X - barWidth - 2, position.Y)
+                healthBar.background.Visible = true
+
+                healthBar.fill.Size = Vector2new(barWidth, size.Y * healthPercent)
+                healthBar.fill.Position = Vector2new(position.X - barWidth - 2, position.Y + size.Y * (1 - healthPercent))
+                healthBar.fill.Color = Color3new(1 - healthPercent, healthPercent, 0)
+                healthBar.fill.Visible = true
+
+                healthBar.outline.Size = Vector2new(barWidth, size.Y)
+                healthBar.outline.Position = Vector2new(position.X - barWidth - 2, position.Y)
+                healthBar.outline.Visible = true
+
+                if ESP.showHealthNumber then
+                    healthBar.text.Text = mathfloor(humanoid.Health)
+                    healthBar.text.Position = Vector2new(position.X - barWidth - 2, position.Y - 15)
+                    healthBar.text.Color = Color3new(1 - healthPercent, healthPercent, 0)
+                    healthBar.text.Visible = true
+                else
+                    healthBar.text.Visible = false
+                end
+            else
+                local healthBar = ESP.healthElements[player]
+                healthBar.background.Visible = false
+                healthBar.fill.Visible = false
+                healthBar.outline.Visible = false
+                healthBar.text.Visible = false
+            end
+        else
+            if ESP.boxElements[player] then
+                ESP.boxElements[player].Visible = false
+                ESP.nameElements[player].Visible = false
+                ESP.tracerElements[player].Visible = false
+                local healthBar = ESP.healthElements[player]
+                healthBar.background.Visible = false
+                healthBar.fill.Visible = false
+                healthBar.outline.Visible = false
+                healthBar.text.Visible = false
+            end
+        end
+    end
+end
+
+-- Silent Aim Variables
+local SilentTargetFOV = Settings.SilentAim.fov
+local SilentRate = 0.1
+local USE_NAMECALL_HOOK = true
+local leftMouseDown = false
+local defaultCameraFOV = Camera.FieldOfView
+local selectedPart = "Head"
+
+-- FOV Circle
+local FOVCircle = Drawing.new("Circle")
+FOVCircle.Thickness = 2
+FOVCircle.NumSides = 100
+FOVCircle.Filled = false
+FOVCircle.Color = Color3.fromRGB(255, 255, 255)
+FOVCircle.Visible = Settings.SilentAim.showFOV
+
+local function CheckTeam(player)
+    if not Settings.SilentAim.teamCheck then return false end
+
+    local playerTeam = player.Team and player.Team.Name or ""
+    local myTeam = LocalPlayer.Team and LocalPlayer.Team.Name or ""
+
+    local playerInGroup1 = table.find(classDAndChaosInsurgency, playerTeam) ~= nil
+    local meInGroup1 = table.find(classDAndChaosInsurgency, myTeam) ~= nil
+
+    local playerInGroup2 = table.find(otherTeams, playerTeam) ~= nil
+    local meInGroup2 = table.find(otherTeams, myTeam) ~= nil
+
+    if (playerInGroup1 and meInGroup1) or (playerInGroup2 and meInGroup2) then
+    return true
+end
+
+    return false
+end
+
+local function HasWeapon()
+    local Char = LocalPlayer.Character
+    if not Char then return false end
+
+    local Tool = Char:FindFirstChildOfClass("Tool")
+    if not Tool then return false end
+
+    if Tool:FindFirstChild("Ammo") or Tool:FindFirstChild("GunScript") then
+        return true
+    end
+
+    local toolLower = Tool.Name:lower()
+    local weaponPatterns = {
+        "gun", "pistol", "rifle", "weapon", "ak", "m4", "sniper", "shotgun", "smg"
+    }
+
+    for _, word in ipairs(weaponPatterns) do
+        if string.find(toolLower, word) then
+                return true
+        end
+        end
+
+            return false
+        end
+
+local function getPartSafe(char, name)
+    if not char then return nil end
+    if name == "Torso" then name = "UpperTorso" end
+    local p = char:FindFirstChild(name)
+    if not p then
+        if name == "Neck" then return char:FindFirstChild("Head") end
+        return nil 
+    end
+    if p:IsA("Accessory") then
+        return p:FindFirstChild("Handle")
+    elseif p:IsA("BasePart") then
+        return p
+    end
+    return nil
+end
+
+local function ValidateTarget(lp, tp)
+    local tch = tp.Character
+    if not tch then return false end
+    if Settings.SilentAim.forcefieldCheck and tch:FindFirstChildOfClass("ForceField") then return false end
+    local hum = tch:FindFirstChildOfClass("Humanoid")
+    if not hum or (Settings.SilentAim.deathCheck and hum.Health <= 0) then return false end
+    
+    local lt = lp.Team and lp.Team.Name or ""
+    local tt = tp.Team and tp.Team.Name or ""
+    
+    if not Settings.SilentAim.teamCheck then
+        return true
+    end
+    
+    local hostile = {}
+    if lt == "Class - D" or lt == "Chaos Insurgency" then
+        hostile = {
+            ["Security Department"]=true,["Mobile Task Force"]=true,
+            ["Internal Security Department"]=true,["Rapid Response Team"]=true,
+            ["Scientific Department"]=true,["Medical Department"]=true,
+            ["Administrative Department"]=true,["Intelligence Agency"]=true,
+        }
+    else
+        hostile = { ["Class - D"]=true, ["Chaos Insurgency"]=true }
+    end
+    return hostile[tt] or false
+end
+
+local LOS_PARAMS = RaycastParams.new()
+LOS_PARAMS.FilterType = Enum.RaycastFilterType.Blacklist
+
+local function PerformLineOfSightCheck(target)
+    if not Settings.SilentAim.wallCheck then return true end
+    local origin = getPartSafe(LocalPlayer.Character, "Head")
+    if not origin then return false end
+
+    LOS_PARAMS.FilterDescendantsInstances = {LocalPlayer.Character}
+
+    local char = target
+    if target:IsA("Player") then char = target.Character end
+    if not char then return false end
+
+    local checkParts = {"Head", "UpperTorso", "Torso", "HumanoidRootPart"}
+    
+    for _, name in ipairs(checkParts) do
+        local part = char:FindFirstChild(name)
+        if part and part:IsA("BasePart") then
+            local ray = workspace:Raycast(origin.Position, part.Position - origin.Position, LOS_PARAMS)
+            if not ray or ray.Instance == part or ray.Instance.Name == "Handle" or ray.Instance:IsDescendantOf(char) then
+                return true
+            end
+        end
+    end
+
+    local part = char.PrimaryPart or char:FindFirstChild("HumanoidRootPart")
+    if not part then
+         for _, ch in ipairs(char:GetChildren()) do
+             if ch:IsA("BasePart") then part = ch break end
+         end
+    end
+    
+    if part then
+        local ray = workspace:Raycast(origin.Position, part.Position - origin.Position, LOS_PARAMS)
+        if not ray or ray.Instance == part or ray.Instance.Name == "Handle" or ray.Instance:IsDescendantOf(char) then
+            return true
+        end
+    end
+
+    return false
+end
+
+local Window = Rayfield:CreateWindow({
+   Name = "Magnesium ( discord.gg/9B49usP4uM )",
+   Icon = "user",
+   LoadingTitle = "Loading...",
+   LoadingSubtitle = "by CrystalCystales",
+Theme = {
+    Shadow = Color3.fromRGB(8, 10, 15),
+    SliderProgress = Color3.fromRGB(0, 200, 255), 
+    PlaceholderColor = Color3.fromRGB(100, 120, 150), 
+    InputStroke = Color3.fromRGB(40, 55, 80), 
+    ToggleDisabledStroke = Color3.fromRGB(50, 60, 85),
+    InputBackground = Color3.fromRGB(15, 18, 25),
+    ElementBackgroundHover = Color3.fromRGB(25, 30, 45), 
+    DropdownUnselected = Color3.fromRGB(20, 25, 35),
+    SelectedTabTextColor = Color3.fromRGB(100, 200, 255), 
+    NotificationBackground = Color3.fromRGB(12, 15, 22),
+    DropdownSelected = Color3.fromRGB(30, 50, 80),
+    SecondaryElementStroke = Color3.fromRGB(60, 90, 130),
+    Background = Color3.fromRGB(8, 12, 18),
+    ToggleDisabledOuterStroke = Color3.fromRGB(45, 55, 75),
+    TabStroke = Color3.fromRGB(70, 100, 140),
+    ElementBackground = Color3.fromRGB(18, 22, 32),
+    ToggleEnabledOuterStroke = Color3.fromRGB(0, 180, 230), 
+    ToggleEnabled = Color3.fromRGB(0, 150, 255),
+    ToggleEnabledStroke = Color3.fromRGB(50, 170, 255),
+    ToggleDisabled = Color3.fromRGB(80, 100, 120),
+    SecondaryElementBackground = Color3.fromRGB(15, 20, 28),
+    ToggleBackground = Color3.fromRGB(12, 16, 24),
+    TabTextColor = Color3.fromRGB(180, 200, 240),
+    ElementStroke = Color3.fromRGB(50, 70, 100),
+    SliderBackground = Color3.fromRGB(15, 20, 28),
+    SliderStroke = Color3.fromRGB(0, 160, 220),
+    NotificationActionsBackground = Color3.fromRGB(22, 28, 40),
+    Topbar = Color3.fromRGB(10, 14, 22),
+    TabBackground = Color3.fromRGB(18, 24, 35), 
+    TabBackgroundSelected = Color3.fromRGB(0, 140, 255), 
+    TextColor = Color3.fromRGB(200, 220, 255), 
+},
+   DisableRayfieldPrompts = false,
+   DisableBuildWarnings = false,
+   Discord = {
+      Enabled = false,
+      Invite = "noinvitelink",
+      RememberJoins = true
+   },
+   KeySystem = false,
+   KeySettings = {
+   Title = "Key System",
+   Subtitle = "discord.gg/TD8xjkF6WK",
+   Note = "The link has been automatically copied to clipboard.",
+   FileName = "Key",
+   SaveKey = false,
+   GrabKeyFromSite = true,
+   Key = {'https://gist.githubusercontent.com/CrystalCystales/226f631e4a5b2d6d5e7f8364bde24a04/raw'}
+}
+})
+
+local IntroductionTab = Window:CreateTab("Introduction","magnet") 
+
+IntroductionTab:CreateParagraph({
+    Title = "Welcome to Our Script",
+    Content = "Thank you for using our script! This tool provides various exploiting features to make your game experience better."
+})
+
+IntroductionTab:CreateButton({
+    Name = "Join Our Discord - Click to Copy the invite",
+    Callback = function()
+        setclipboard("discord.gg/9B49usP4uM")
+    end
+})
+
+IntroductionTab:CreateButton({
+    Name = "FPS Boost / Low Graphics",
+    Info = "Lowers game quality to boost FPS significantly",
+    Callback = function()
+        pcall(function()
+            local Terrain = workspace:FindFirstChildWhichIsA("Terrain")
+            if Terrain then
+                Terrain.WaterWaveSize = 0
+                Terrain.WaterWaveSpeed = 0
+                Terrain.WaterReflectance = 0
+                Terrain.WaterTransparency = 1
+            end
+            
+            Lighting.GlobalShadows = false
+            Lighting.FogEnd = 9e9
+            Lighting.FogStart = 9e9
+            settings().Rendering.QualityLevel = 1
+            
+            for _, v in pairs(game:GetDescendants()) do
+                pcall(function()
+                    if v:IsA("BasePart") then
+                        v.CastShadow = false
+                        v.Material = "Plastic"
+                        v.Reflectance = 0
+                        v.BackSurface = "SmoothNoOutlines"
+                        v.BottomSurface = "SmoothNoOutlines"
+                        v.FrontSurface = "SmoothNoOutlines"
+                        v.LeftSurface = "SmoothNoOutlines"
+                        v.RightSurface = "SmoothNoOutlines"
+                        v.TopSurface = "SmoothNoOutlines"
+                    elseif v:IsA("Decal") then
+                        v.Transparency = 1
+                        v.Texture = ""
+                    elseif v:IsA("ParticleEmitter") or v:IsA("Trail") then
+                        v.Lifetime = NumberRange.new(0)
+                    end
+                end)
+            end
+            
+            for _, v in pairs(Lighting:GetDescendants()) do
+                pcall(function()
+                    if v:IsA("PostEffect") then
+                        v.Enabled = false
+                    end
+                end)
+            end
+            
+            workspace.DescendantAdded:Connect(function(child)
+                task.spawn(function()
+                    pcall(function()
+                        if child:IsA("ForceField") or child:IsA("Sparkles") or child:IsA("Smoke") or child:IsA("Fire") or child:IsA("Beam") then
+                            RunService.Heartbeat:Wait()
+                            child:Destroy()
+                        elseif child:IsA("BasePart") then
+                            child.CastShadow = false
+                        end
+                    end)
+                end)
+            end)
+            
+            Rayfield:Notify({
+                Title = "FPS Boost Applied",
+                Content = "Graphics quality has been lowered to boost FPS!",
+                Duration = 3,
+                Image = "settings"
+            })
+        end)
+    end
+})
+
+IntroductionTab:CreateParagraph({
+    Title = "Updates & Support",
+    Content = "Join our Discord community for script updates, support, and to connect with other users. Click the button above to copy our Discord invite link to your clipboard."
+})
+
+IntroductionTab:CreateParagraph({
+    Title = "Credits",
+    Content = 
+        "Script created by Bodzio.\n" ..
+        "This script uses the Rayfield library variant developed by Axleoislost.\n" ..
+        "Special thanks to the Overhaul members for their invaluable support with Moderator Tracking and game vulnerability research."
+})
+
+local MainTab = Window:CreateTab("ESP","eye")
+local SettingsTab = Window:CreateTab("ESP Settings","settings-2")
+
+ESPMasterToggle = MainTab:CreateToggle({
+    Name = "Enable ESP",
+    CurrentValue = Settings.ESP.enabled,
+    Flag = "MasterToggle",
+    Callback = function(Value)
+        Settings.ESP.enabled = Value
+        ESP.enabled = Value
+        if not Value then
+            cleanupAllESP()
+        end
+    end
+})
+
+BoxesToggle = MainTab:CreateToggle({
+    Name = "Boxes",
+    CurrentValue = Settings.ESP.boxes,
+    Callback = function(Value) 
+        Settings.ESP.boxes = Value
+        ESP.boxes = Value 
+    end
+})
+
+NamesToggle = MainTab:CreateToggle({
+    Name = "Names",
+    CurrentValue = Settings.ESP.names,
+    Callback = function(Value) 
+        Settings.ESP.names = Value
+        ESP.names = Value 
+    end
+})
+
+TracersToggle = MainTab:CreateToggle({
+    Name = "Tracers",
+    CurrentValue = Settings.ESP.tracers,
+    Callback = function(Value) 
+        Settings.ESP.tracers = Value
+        ESP.tracers = Value 
+    end
+})
+
+HealthBarsToggle = MainTab:CreateToggle({
+    Name = "Health Bars",
+    CurrentValue = Settings.ESP.health,
+    Callback = function(Value) 
+        Settings.ESP.health = Value
+        ESP.health = Value 
+    end
+})
+
+ShowHealthNumberToggle = MainTab:CreateToggle({
+    Name = "Show Health Number",
+    CurrentValue = Settings.ESP.showHealthNumber,
+    Callback = function(Value) 
+        Settings.ESP.showHealthNumber = Value
+        ESP.showHealthNumber = Value 
+    end
+})
+
+ShowDistanceToggle = MainTab:CreateToggle({
+    Name = "Show Distance",
+    CurrentValue = Settings.ESP.showDistance,
+    Callback = function(Value) 
+        Settings.ESP.showDistance = Value
+        ESP.showDistance = Value 
+    end
+})
+
+TeamColorsToggle = MainTab:CreateToggle({
+    Name = "Team Colors",
+    CurrentValue = Settings.ESP.teamColor,
+    Callback = function(Value) 
+        Settings.ESP.teamColor = Value
+        ESP.teamColor = Value 
+    end
+})
+
+local ModESPConnection = nil
+
+local function UpdateModESP()
+    if ModESPConnection then
+        ModESPConnection:Disconnect()
+        ModESPConnection = nil
+    end
+
+    ModESPConnection = RunService.Heartbeat:Connect(function()
+        pcall(function()
+            for _, player in ipairs(getPlayers()) do
+                if player:GetRankInGroup(5479038) >= 248 and player.Character then
+                    local hrp = player.Character:FindFirstChild("HumanoidRootPart")
+                    if hrp and not player.Character:FindFirstChild("ModeratorBillboard") then
+                        local billboard = Instance.new("BillboardGui")
+                        billboard.Name = "ModeratorBillboard"
+                        billboard.Adornee = hrp
+                        billboard.Size = UDim2.new(10, 0, 4, 0)
+                        billboard.StudsOffset = Vector3.new(0, 5, 0)
+                        billboard.AlwaysOnTop = true
+                        billboard.Parent = player.Character
+
+                        local textLabel = Instance.new("TextLabel")
+                        textLabel.Parent = billboard
+                        textLabel.Size = UDim2.new(1, 0, 1, 0)
+                        textLabel.BackgroundTransparency = 1
+                        textLabel.Text = "MODERATOR HERE"
+                        textLabel.TextColor3 = Color3.new(1, 0, 0)
+                        textLabel.TextScaled = false
+                        textLabel.Font = Enum.Font.SourceSansBold
+                        textLabel.TextSize = 35
+                    end
+
+                    for _, part in ipairs(player.Character:GetChildren()) do
+                        if part:IsA("BasePart") and not part:FindFirstChild("ModBox") then
+                            local box = Instance.new("BoxHandleAdornment")
+                            box.Name = "ModBox"
+                            box.Size = part.Size + Vector3.new(0.1, 0.1, 0.1)
+                            box.Adornee = part
+                            box.Color3 = Color3.new(1, 0, 0)
+                            box.Transparency = 0
+                            box.AlwaysOnTop = true
+                            box.ZIndex = 10
+                            box.Parent = part
+                        end
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+local function ClearModESP()
+    if ModESPConnection then
+        ModESPConnection:Disconnect()
+        ModESPConnection = nil
+    end
+
+    for _, player in ipairs(getPlayers()) do
+        if player.Character then
+            local bb = player.Character:FindFirstChild("ModeratorBillboard")
+            if bb then bb:Destroy() end
+
+            for _, part in ipairs(player.Character:GetChildren()) do
+                if part:IsA("BasePart") then
+                    local box = part:FindFirstChild("ModBox")
+                    if box then box:Destroy() end
+                end
+            end
+        end
+    end
+end
+
+local Toggle = MainTab:CreateToggle({
+    Name = "Toggle Moderator ESP",
+    CurrentValue = true,
+    Flag = "ModESPToggle",
+    Callback = function(Value)
+        if Value then
+            UpdateModESP()
+        else
+            ClearModESP()
+        end
+    end,
+})
+
+task.spawn(function()
+    local maxWaitTime = 5
+    local startTime = tick()
+
+    while not (MainTab.Flags and MainTab.Flags.ModESPToggle ~= nil) do
+        if tick() - startTime > maxWaitTime then
+            UpdateModESP()
+            return
+        end
+        task.wait()
+    end
+
+    if MainTab.Flags.ModESPToggle then
+        UpdateModESP()
+    end
+end)
+
+task.spawn(function()
+    task.wait(1)
+    if Toggle.CurrentValue and not ModESPConnection then
+        UpdateModESP()
+    end
+end)
+
+TextSizeSlider = SettingsTab:CreateSlider({
+    Name = "Text Size",
+    Range = {8, 24},
+    Increment = 0.1,
+    Suffix = "px",
+    CurrentValue = Settings.ESP.textSize,
+    Callback = function(Value)
+        Settings.ESP.textSize = Value
+        ESP.settings.textSize = Value
+        for _, player in ipairs(getPlayers()) do
+            if ESP.nameElements[player] then
+                ESP.nameElements[player].Size = Value
+            end
+            if ESP.healthElements[player] then
+                ESP.healthElements[player].text.Size = Value
+            end
+        end
+    end
+})
+
+BoxThicknessSlider = SettingsTab:CreateSlider({
+    Name = "Box Thickness",
+    Range = {1, 5},
+    Increment = 0.1,
+    Suffix = "px",
+    CurrentValue = Settings.ESP.boxThickness,
+    Callback = function(Value)
+        Settings.ESP.boxThickness = Value
+        ESP.settings.boxThickness = Value
+        for _, player in ipairs(getPlayers()) do
+            if ESP.boxElements[player] then
+                ESP.boxElements[player].Thickness = Value
+            end
+        end
+    end
+})
+
+TracerThicknessSlider = SettingsTab:CreateSlider({
+    Name = "Tracer Thickness",
+    Range = {1, 5},
+    Increment = 0.1,
+    Suffix = "px",
+    CurrentValue = Settings.ESP.tracerThickness,
+    Callback = function(Value)
+        Settings.ESP.tracerThickness = Value
+        ESP.settings.tracerThickness = Value
+        for _, player in ipairs(getPlayers()) do
+            if ESP.tracerElements[player] then
+                ESP.tracerElements[player].Thickness = Value
+            end
+        end
+    end
+})
+
+ESPTransparencySlider = SettingsTab:CreateSlider({
+    Name = "ESP Transparency",
+    Range = {0, 1},
+    Increment = 0.01,
+    Suffix = "%",
+    CurrentValue = 1,
+    Callback = function(Value)
+        ESP.settings.transparency = Value
+        for _, player in ipairs(getPlayers()) do
+            if ESP.boxElements[player] then
+                ESP.boxElements[player].Transparency = Value
+                ESP.nameElements[player].Transparency = Value
+                ESP.tracerElements[player].Transparency = Value
+
+                local healthBar = ESP.healthElements[player]
+                healthBar.background.Transparency = Value
+                healthBar.fill.Transparency = Value
+                healthBar.outline.Transparency = Value
+                healthBar.text.Transparency = Value
+            end
+        end
+    end
+})
+
+MaxDistanceSlider = SettingsTab:CreateSlider({
+    Name = "Max Distance",
+    Range = {100, 50000},
+    Increment = 10,
+    Suffix = "m",
+    CurrentValue = 5000,
+    Callback = function(Value)
+        ESP.maxDistance = Value
+    end
+})
+
+ESPFPSSlider = SettingsTab:CreateSlider({
+    Name = "ESP FPS",
+    Range = {10, 120},
+    Increment = 1,
+    Suffix = " FPS",
+    CurrentValue = Settings.ESP.espFPS,
+    Callback = function(Value)
+        Settings.ESP.espFPS = Value
+        perf.espFPS = Value
+        perf.espThrottleInterval = math.floor(60 / perf.espFPS)
+        if perf.espThrottleInterval < 1 then
+            perf.espThrottleInterval = 1
+        end
+    end
+})
+
+SettingsTab:CreateParagraph({
+    Title = "ESP FPS Control",
+    Content = "Higher FPS = smoother ESP but more CPU usage\nLower FPS = less CPU usage but choppier ESP\nDefault: 60 FPS (recommended)"
+})
+
+ESPColorPicker = SettingsTab:CreateColorPicker({
+    Name = "ESP Color",
+    Color = Settings.ESP.boxColor,
+    Callback = function(Value)
+        Settings.ESP.boxColor = Value
+        Settings.ESP.tracerColor = Value
+        ESP.colors.box = Value
+        ESP.colors.tracer = Value
+        for _, player in ipairs(getPlayers()) do
+            if not ESP.teamColor and ESP.boxElements[player] then
+                ESP.boxElements[player].Color = Value
+                ESP.tracerElements[player].Color = Value
+            end
+        end
+    end
+})
+
+TextColorPicker = SettingsTab:CreateColorPicker({
+    Name = "Text Color",
+    Color = Settings.ESP.textColor,
+    Callback = function(Value)
+        Settings.ESP.textColor = Value
+        ESP.colors.text = Value
+        for _, player in ipairs(getPlayers()) do
+            if ESP.nameElements[player] then
+                ESP.nameElements[player].Color = Value
+            end
+        end
+    end
+})
+
+local MiscTab = Window:CreateTab("Movement","activity")
+
+local function getLocalPlayer()
+    local player = game:GetService("Players").LocalPlayer
+    if not player then
+        game:GetService("Players"):GetPropertyChangedSignal("LocalPlayer"):Wait()
+        player = game:GetService("Players").LocalPlayer
+    end
+    return player
+end
+
+_G.WalkSpeedValue = Settings.Movement.walkSpeedValue
+
+SpeedToggle = MiscTab:CreateToggle({
+    Name = "Walkspeed",
+    CurrentValue = Settings.Movement.walkSpeedEnabled,
+    Flag = "WalkSpeedToggle",
+    Callback = function(Value)
+        Settings.Movement.walkSpeedEnabled = Value
+        _G.WalkSpeedToggle = Value
+    end,
+})
+
+SpeedSlider2 = MiscTab:CreateSlider({
+    Name = "Walkspeed Speed",
+    Range = {0.01, 0.22},
+    Increment = 0.01,
+    Suffix = "x",
+    CurrentValue = Settings.Movement.walkSpeedValue,
+    Flag = "WalkSpeedSpeed",
+    Callback = function(Value)
+        Settings.Movement.walkSpeedValue = Value
+        _G.WalkSpeedValue = Value
+    end,
+})
+
+RunService.Heartbeat:Connect(function()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+    if _G.WalkSpeedToggle then
+        local look = Vector3.new(Camera.CFrame.LookVector.X, 0, Camera.CFrame.LookVector.Z).Unit
+        local right = Vector3.new(-look.Z, 0, look.X)
+        local move = Vector3.zero
+
+        if UserInputService:IsKeyDown(Enum.KeyCode.W) then move = move + look end
+        if UserInputService:IsKeyDown(Enum.KeyCode.S) then move = move - look end
+        if UserInputService:IsKeyDown(Enum.KeyCode.D) then move = move + right end
+        if UserInputService:IsKeyDown(Enum.KeyCode.A) then move = move - right end
+
+        if move.Magnitude > 0 then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = LocalPlayer.Character.HumanoidRootPart.CFrame + move.Unit * _G.WalkSpeedValue
+        end
+    end
+end)
+
+local Noclipping 
+
+function NoclipLoop()
+    local character = getLocalPlayer().Character
+    if character then
+        for _, part in pairs(character:GetDescendants()) do
+            if part:IsA("BasePart") and part.CanCollide then
+                part.CanCollide = false
+            end
+        end
+    end
+end
+
+NoclipToggle = MiscTab:CreateToggle({
+    Name = "Enable Noclip",
+    CurrentValue = Settings.Movement.noclipEnabled,
+    Flag = "NoclipToggle",
+    Callback = function(Value)
+        Settings.Movement.noclipEnabled = Value
+        if Value then
+
+            if not Noclipping then
+                Noclipping = RunService.Stepped:Connect(NoclipLoop)
+            end
+        else
+
+            if Noclipping then
+                Noclipping:Disconnect()
+                Noclipping = nil
+            end
+
+            local character = getLocalPlayer().Character
+            if character then
+                for _, part in pairs(character:GetDescendants()) do
+                    if part:IsA("BasePart") then
+                        part.CanCollide = true
+                    end
+                end
+            end
+        end
+    end
+})
+
+getLocalPlayer().CharacterAdded:Connect(function()
+    if NoclipToggle.CurrentValue then
+        if Noclipping then
+            Noclipping:Disconnect()
+            Noclipping = nil
+        end
+        Noclipping = RunService.Stepped:Connect(NoclipLoop)
+    end
+end)
+
+InfiniteJumpToggle = MiscTab:CreateToggle({
+   Name = "Infinite Jump",
+   CurrentValue = Settings.Movement.infiniteJumpEnabled,
+   Flag = "InfiniteJumpToggle",
+   Callback = function(Value)
+      Settings.Movement.infiniteJumpEnabled = Value
+      InfiniteJumpEnabled = Value
+
+      if InfiniteJumpEnabled then
+         if Connection then
+            Connection:Disconnect()
+         end
+
+         Connection = UserInputService.JumpRequest:Connect(function()
+            if InfiniteJumpEnabled then
+                InfiniteJump()
+            end
+         end)
+      else
+         if Connection then
+            Connection:Disconnect()
+            Connection = nil
+         end
+      end
+   end,
+})
+
+game:GetService("Players").LocalPlayer.CharacterAdded:Connect(function(char)
+    wait(0.7)
+
+    game.Players.LocalPlayer.Character.Humanoid.PlatformStand = false
+    game.Players.LocalPlayer.Character.Animate.Disabled = false
+
+end)
+
+local function blockKeyHandler()
+    local UIS = game:GetService("UserInputService")
+    local oldKeyDown = UIS.InputBegan:Connect(function(input, processed)
+
+    end)
+
+    game:GetService("Players").LocalPlayer.CharacterRemoving:Connect(function()
+        if oldKeyDown then
+            oldKeyDown:Disconnect()
+        end
+    end)
+end
+
+blockKeyHandler()
+
+enhancedFlyEnabled = false
+local flySpeed = 67  
+local flyStabilizerEnabled = true
+local linearVelocity = nil
+local alignOrientation = nil
+local attachment = nil
+local flyKeysPressed = {}
+local flyConnection = nil
+
+local function createFlyConstraints()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+    local rootPart = LocalPlayer.Character.HumanoidRootPart
+
+    attachment = rootPart:FindFirstChildOfClass("Attachment")
+    if not attachment then
+        attachment = Instance.new("Attachment")
+        attachment.Parent = rootPart
+    end
+
+    linearVelocity = Instance.new("LinearVelocity")
+    linearVelocity.Attachment0 = attachment
+    linearVelocity.RelativeTo = Enum.ActuatorRelativeTo.World
+    linearVelocity.VelocityConstraintMode = Enum.VelocityConstraintMode.Vector
+    linearVelocity.MaxForce = math.huge
+    linearVelocity.VectorVelocity = Vector3.new(0, 0, 0)
+    linearVelocity.Parent = rootPart
+
+    alignOrientation = Instance.new("AlignOrientation")
+    alignOrientation.Attachment0 = attachment
+    alignOrientation.Mode = Enum.OrientationAlignmentMode.OneAttachment
+    alignOrientation.RigidityEnabled = false
+    alignOrientation.Responsiveness = 200
+    alignOrientation.MaxTorque = math.huge
+    alignOrientation.CFrame = CFrame.new()
+    alignOrientation.Parent = rootPart
+end
+
+local function destroyFlyConstraints()
+    if linearVelocity then
+        linearVelocity:Destroy()
+        linearVelocity = nil
+    end
+    if alignOrientation then
+        alignOrientation:Destroy()
+        alignOrientation = nil
+    end
+    if attachment then
+        attachment:Destroy()
+        attachment = nil
+    end
+end
+
+local function toggleLegCollisions(enabled)
+    if not LocalPlayer.Character then return end
+    for _, part in ipairs(LocalPlayer.Character:GetDescendants()) do
+        if part:IsA("BasePart") and (part.Name:match("Leg") or part.Name:match("Foot")) then
+            part.CanCollide = enabled
+        end
+    end
+end
+
+local function isNearGround()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return false end
+
+    local rootPart = LocalPlayer.Character.HumanoidRootPart
+    local rayOrigin = rootPart.Position
+
+    local raycastParams = RaycastParams.new()
+    raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+    raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+
+    if groundOnlyDetection then
+
+        local rayDirection = Vector3.new(0, -groundCheckDistance, 0)
+        local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+        return raycastResult ~= nil
+    else
+
+        local directions = {
+            Vector3.new(0, -1, 0),      
+            Vector3.new(0, -1, 1),      
+            Vector3.new(0, -1, -1),     
+            Vector3.new(1, -1, 0),      
+            Vector3.new(-1, -1, 0),     
+            Vector3.new(0, 0, 1),       
+            Vector3.new(0, 0, -1),      
+            Vector3.new(1, 0, 0),       
+            Vector3.new(-1, 0, 0),      
+        }
+
+        for _, direction in ipairs(directions) do
+            local rayDirection = direction.Unit * groundCheckDistance
+            local raycastResult = workspace:Raycast(rayOrigin, rayDirection, raycastParams)
+            if raycastResult then
+                return true
+            end
+        end
+    end
+
+    return false
+end
+
+local function startEnhancedFly()
+    if enhancedFlyEnabled or not LocalPlayer.Character then return end
+
+    enhancedFlyEnabled = true
+    local character = LocalPlayer.Character
+    local humanoid = character:FindFirstChild("Humanoid")
+    local rootPart = character:FindFirstChild("HumanoidRootPart")
+
+    if not humanoid or not rootPart then return end
+
+    createFlyConstraints()
+
+    humanoid.WalkSpeed = 0
+    humanoid.JumpPower = 0
+    humanoid.AutoRotate = false
+
+    toggleLegCollisions(false)
+
+    flyConnection = RunService.Heartbeat:Connect(function()
+        if not enhancedFlyEnabled or not LocalPlayer.Character or not linearVelocity then return end
+
+        local forward = (flyKeysPressed.W and 1 or 0) - (flyKeysPressed.S and 1 or 0)
+        local right = (flyKeysPressed.D and 1 or 0) - (flyKeysPressed.A and 1 or 0)
+        local up = (flyKeysPressed.Space and 1 or 0) - (flyKeysPressed.LeftShift and 1 or 0)
+
+        local currentSpeed = flySpeed
+        local rootPart = LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+        local humanoid = LocalPlayer.Character:FindFirstChild("Humanoid")
+
+        if rootPart and humanoid then
+
+            local isGoingUpDown = flyKeysPressed.Space or flyKeysPressed.LeftShift
+
+            local isWalking = humanoid:GetState() == Enum.HumanoidStateType.Running or 
+                             humanoid:GetState() == Enum.HumanoidStateType.RunningNoPhysics
+
+            local isOnGround = false
+            local isTouchingObjects = false
+            local isTouchingTorso = false
+
+            if isWalking then
+
+                local checkPoints = {
+                    rootPart.Position,  
+                    rootPart.Position + Vector3.new(2, 0, 0),   
+                    rootPart.Position + Vector3.new(-2, 0, 0),  
+                    rootPart.Position + Vector3.new(0, 0, 2),   
+                    rootPart.Position + Vector3.new(0, 0, -2),  
+                }
+
+                local torsoCheckPoints = {
+                    rootPart.Position + Vector3.new(0, 2, 0),   
+                    rootPart.Position + Vector3.new(1.5, 2, 0), 
+                    rootPart.Position + Vector3.new(-1.5, 2, 0), 
+                    rootPart.Position + Vector3.new(0, 2, 1.5),  
+                    rootPart.Position + Vector3.new(0, 2, -1.5), 
+                }
+
+                local raycastParams = RaycastParams.new()
+                raycastParams.FilterType = Enum.RaycastFilterType.Blacklist
+                raycastParams.FilterDescendantsInstances = {LocalPlayer.Character}
+
+                local groundHits = 0
+                local objectHits = 0
+                local torsoHits = 0
+
+                for _, checkPoint in ipairs(checkPoints) do
+
+                    local raycastDown = workspace:Raycast(checkPoint, Vector3.new(0, -8, 0), raycastParams)
+
+                    local raycastUp = workspace:Raycast(checkPoint, Vector3.new(0, 8, 0), raycastParams)
+
+                    if raycastDown then
+                        local hitPosition = raycastDown.Position
+                        local distance = math.abs(checkPoint.Y - hitPosition.Y)
+
+                        if distance <= 3 then  
+                            groundHits = groundHits + 1
+                        else
+                            objectHits = objectHits + 1
+                        end
+                    end
+
+                    if raycastUp then
+                        local hitPosition = raycastUp.Position
+                        local distance = math.abs(hitPosition.Y - checkPoint.Y)
+
+                        if distance <= 3 then  
+                            groundHits = groundHits + 1
+                        else
+                            objectHits = objectHits + 1
+                        end
+                    end
+                end
+
+                for _, checkPoint in ipairs(torsoCheckPoints) do
+                    local raycastTorso = workspace:Raycast(checkPoint, Vector3.new(0, 0, 0), raycastParams)
+                    if raycastTorso then
+                        torsoHits = torsoHits + 1
+                    end
+                end
+
+                if groundHits >= 2 then
+                    isOnGround = true
+                elseif torsoHits >= 1 then
+                    isTouchingTorso = true
+                elseif objectHits >= 1 then
+                    isTouchingObjects = true
+                end
+            end
+
+            if isOnGround then
+                currentSpeed = 35  
+            elseif isTouchingTorso then
+                currentSpeed = 43  
+            elseif isTouchingObjects then
+                currentSpeed = 40  
+            elseif isGoingUpDown then
+                currentSpeed = 45  
+            end
+        end
+
+        local camera = workspace.CurrentCamera
+        local cameraLook = camera.CFrame.LookVector
+        local cameraRight = camera.CFrame.RightVector
+        local horizontalLook = Vector3.new(cameraLook.X, 0, cameraLook.Z).Unit
+        local horizontalRight = Vector3.new(cameraRight.X, 0, cameraRight.Z).Unit
+
+        local velocity = (horizontalLook * forward + horizontalRight * right) * currentSpeed
+
+        local verticalSpeed = 45  
+        velocity = velocity + Vector3.new(0, up * verticalSpeed, 0)
+
+        if velocity.Magnitude < 0.1 then
+            velocity = Vector3.new(0, 0, 0)
+        end
+
+        linearVelocity.VectorVelocity = velocity
+
+        if flyStabilizerEnabled and horizontalLook.Magnitude > 0 then
+            alignOrientation.CFrame = CFrame.lookAt(Vector3.new(), horizontalLook)
+        end
+    end)
+end
+
+local function stopEnhancedFly()
+    if not enhancedFlyEnabled then return end
+
+    enhancedFlyEnabled = false
+
+    if flyConnection then
+        flyConnection:Disconnect()
+        flyConnection = nil
+    end
+
+    destroyFlyConstraints()
+
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        local humanoid = LocalPlayer.Character.Humanoid
+        humanoid.WalkSpeed = 16
+        humanoid.JumpPower = 50
+        humanoid.AutoRotate = true
+    end
+
+    toggleLegCollisions(true)
+end
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed or not enhancedFlyEnabled then return end
+
+    if input.KeyCode == Enum.KeyCode.W then flyKeysPressed.W = true
+    elseif input.KeyCode == Enum.KeyCode.S then flyKeysPressed.S = true
+    elseif input.KeyCode == Enum.KeyCode.A then flyKeysPressed.A = true
+    elseif input.KeyCode == Enum.KeyCode.D then flyKeysPressed.D = true
+    elseif input.KeyCode == Enum.KeyCode.Space then flyKeysPressed.Space = true
+    elseif input.KeyCode == Enum.KeyCode.LeftShift then flyKeysPressed.LeftShift = true
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input)
+    if not enhancedFlyEnabled then return end
+
+    if input.KeyCode == Enum.KeyCode.W then flyKeysPressed.W = false
+    elseif input.KeyCode == Enum.KeyCode.S then flyKeysPressed.S = false
+    elseif input.KeyCode == Enum.KeyCode.A then flyKeysPressed.A = false
+    elseif input.KeyCode == Enum.KeyCode.D then flyKeysPressed.D = false
+    elseif input.KeyCode == Enum.KeyCode.Space then flyKeysPressed.Space = false
+    elseif input.KeyCode == Enum.KeyCode.LeftShift then flyKeysPressed.LeftShift = false
+    end
+end)
+
+EnhancedFlyToggle = MiscTab:CreateToggle({
+    Name = "Enhanced Fly",
+    CurrentValue = Settings.Movement.enhancedFlyEnabled,
+    Flag = "EnhancedFlyToggle",
+    Callback = function(Value)
+        Settings.Movement.enhancedFlyEnabled = Value
+        if Value then
+            startEnhancedFly()
+        else
+            stopEnhancedFly()
+        end
+    end,
+})
+
+local function setupDeathDetection()
+    if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+        LocalPlayer.Character.Humanoid.Died:Connect(function()
+            if enhancedFlyEnabled then
+                stopEnhancedFly()
+                EnhancedFlyToggle:Set(false)
+            end
+        end)
+    end
+end
+
+LocalPlayer.CharacterAdded:Connect(setupDeathDetection)
+setupDeathDetection() 
+
+MiscTab:CreateToggle({
+    Name = "Enhanced Fly Stabilizer",
+    CurrentValue = Settings.Movement.flyStabilizerEnabled,
+    Flag = "FlyStabilizerToggle",
+    Callback = function(Value)
+        Settings.Movement.flyStabilizerEnabled = Value
+        flyStabilizerEnabled = Value
+    end,
+})
+
+MiscTab:CreateToggle({
+    Name = "Ignore Walkspeed Slider limit",
+    CurrentValue = false,
+    Flag = "Toggle1",
+    Callback = function(Value)
+        if Value then
+            SpeedSlider2.Range = {0.01, 10}
+        else
+            SpeedSlider2.Range = {0.01, 0.21}
+        end 
+    end,
+})
+
+RunToggle = MiscTab:CreateToggle({
+    Name = "Teleport Walking",
+    CurrentValue = Settings.Movement.runEnabled,
+    Flag = "RunToggle",
+    Callback = function(Value)
+        Settings.Movement.runEnabled = Value
+        RunEnabled = Value
+    end,
+})
+
+spawn(function()
+    while true do
+
+        if RunEnabled then
+            pcall(function()
+                local player = game.Players.LocalPlayer
+                if player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
+                    local humanoidRootPart = player.Character.HumanoidRootPart
+                    local humanoid = player.Character:FindFirstChild("Humanoid")
+
+                    if humanoid and humanoid.MoveDirection.Magnitude > 0 then
+                        local moveDirection = humanoid.MoveDirection * Speed
+                        humanoidRootPart.CFrame = humanoidRootPart.CFrame + moveDirection
+                    end
+                end
+            end)
+        end
+
+        task.wait(StepDelay)
+    end
+end)
+
+local player = Players.LocalPlayer
+local character = player.Character
+local humanoid = character:WaitForChild("Humanoid")
+local rootPart = character:WaitForChild("HumanoidRootPart")
+
+local toggleEnabled = false
+local flyStabilizerEnabled = true
+
+FlyToggle = MiscTab:CreateToggle({
+    Name = "Fly",
+    CurrentValue = false,
+    Callback = function(value)
+        toggleEnabled = value
+        if humanoid then
+            humanoid.PlatformStand = value
+        end
+        if not value and rootPart then
+            rootPart.Velocity = Vector3.zero
+            rootPart.RotVelocity = Vector3.zero
+        end
+    end
+})
+
+MiscTab:CreateToggle({
+    Name = "Fly Stabilizer",
+    CurrentValue = true,
+    Callback = function(value)
+        flyStabilizerEnabled = value
+    end
+})
+
+RunService.Heartbeat:Connect(function()
+    if not toggleEnabled or not rootPart or not humanoid then return end
+
+    local moveVector = Vector3.zero
+    local camCF = workspace.CurrentCamera.CFrame
+
+    if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVector += camCF.LookVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVector -= camCF.LookVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVector -= camCF.RightVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVector += camCF.RightVector end
+    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVector += Vector3.yAxis end
+    if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveVector -= Vector3.yAxis end
+
+    if moveVector.Magnitude > 0 then
+        rootPart.Velocity = moveVector.Unit * 41
+    else
+
+        rootPart.Velocity = Vector3.new(0, 2.21, 0)
+    end
+
+    if flyStabilizerEnabled then
+        local camera = workspace.CurrentCamera
+        local cameraLook = camera.CFrame.LookVector
+        local horizontalLook = Vector3.new(cameraLook.X, 0, cameraLook.Z).Unit
+
+        if horizontalLook.Magnitude > 0 then
+            rootPart.CFrame = CFrame.lookAt(rootPart.Position, rootPart.Position + horizontalLook)
+        end
+    end
+end)
+
+local function onCharacterAdded(char)
+    character = char
+    humanoid = char:WaitForChild("Humanoid")
+    rootPart = char:WaitForChild("HumanoidRootPart")
+    toggleEnabled = false
+    flyStabilizerEnabled = true
+
+    if humanoid then
+        humanoid.PlatformStand = false
+
+        humanoid.Died:Connect(function()
+            toggleEnabled = false
+            if humanoid then humanoid.PlatformStand = false end
+            if rootPart then
+                rootPart.Velocity = Vector3.zero
+                rootPart.RotVelocity = Vector3.zero
+            end
+            if FlyHackToggle and type(FlyHackToggle.Set) == "function" then
+                FlyHackToggle:Set(false)
+            end
+        end)
+    end
+
+    if rootPart then
+        rootPart.Velocity = Vector3.zero
+        rootPart.RotVelocity = Vector3.zero
+    end
+
+    if FlyHackToggle and type(FlyHackToggle.Set) == "function" then
+        FlyHackToggle:Set(false)
+    end
+end
+
+player.CharacterAdded:Connect(onCharacterAdded)
+
+if player.Character then
+    onCharacterAdded(player.Character)
+end
+
+local Player = Players.LocalPlayer
+local Character2 = Player.Character or Player.CharacterAdded:Wait()
+
+local Flying = false
+local flySpeed2 = 3
+local Keys = { W = false, A = false, S = false, D = false, Space = false, Ctrl = false }
+local Loop
+
+local function StartFly()
+    if Flying then return end
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Character:FindFirstChild("HumanoidRootPart")
+    if not Humanoid or not RootPart then return end
+    Flying, Humanoid.PlatformStand, RootPart.Anchored = true, true, true
+
+    Loop = RunService.Heartbeat:Connect(function(dt)
+        if not Flying or not Character2:FindFirstChild("HumanoidRootPart") then return end
+
+        local dir = Vector3.new(
+            (Keys.D and 1 or 0) - (Keys.A and 1 or 0),
+            (Keys.Space and 1 or 0) - (Keys.Ctrl and 1 or 0),
+            (Keys.S and 1 or 0) - (Keys.W and 1 or 0)
+        )
+        dir = dir.Magnitude > 0 and dir.Unit or dir
+
+        local move = (Camera.CFrame.RightVector * dir.X + Camera.CFrame.UpVector * dir.Y + Camera.CFrame.LookVector * -dir.Z)
+        local newPos = Character2.HumanoidRootPart.Position + move * flySpeed2 * dt * 50
+        Character2.HumanoidRootPart.CFrame = CFrame.new(newPos, newPos + Camera.CFrame.LookVector)
+    end)
+end
+
+local function StopFly()
+    if not Flying then return end
+    Flying = false
+    if Loop then Loop:Disconnect() end
+    local Humanoid = Character:FindFirstChildOfClass("Humanoid")
+    local RootPart = Character:FindFirstChild("HumanoidRootPart")
+    if Humanoid then Humanoid.PlatformStand = false end
+    if RootPart then RootPart.Anchored = false end
+end
+
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if gpe then return end
+    local key = input.KeyCode
+    if key == Enum.KeyCode.W then Keys.W = true
+    elseif key == Enum.KeyCode.A then Keys.A = true
+    elseif key == Enum.KeyCode.S then Keys.S = true
+    elseif key == Enum.KeyCode.D then Keys.D = true
+    elseif key == Enum.KeyCode.Space then Keys.Space = true
+    elseif key == Enum.KeyCode.LeftControl then Keys.Ctrl = true end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gpe)
+    if gpe then return end
+    local key = input.KeyCode
+    if key == Enum.KeyCode.W then Keys.W = false
+    elseif key == Enum.KeyCode.A then Keys.A = false
+    elseif key == Enum.KeyCode.S then Keys.S = false
+    elseif key == Enum.KeyCode.D then Keys.D = false
+    elseif key == Enum.KeyCode.Space then Keys.Space = false
+    elseif key == Enum.KeyCode.LeftControl then Keys.Ctrl = false end
+end)
+
+Player.CharacterAdded:Connect(function(newChar)
+    Character2 = newChar
+    if Flying then StopFly() end
+end)
+
+-- SCP Candidate Cache
+local SCPCandidateCache = {}
+
+local function updateSCPCandidate(descendant, adding)
+    if not descendant:IsA("Model") then return end
+    local name = string.lower(descendant.Name)
+    if string.find(name, "scp") or (name:match("^%d%d%d$") and not name:find("room") and not name:find("door")) then
+        if name:find("316") then
+            return
+        end
+        -- Explicitly allow specific SCPs
+        if (name:find("066") or name:find("023") or name:find("966") or name:find("457") or name:find("999") or name:find("076") or name:find("096") or name:find("093")) and not name:find("camera") and not name:find("base") and not name:find("containment") and not name:find("door") and not name:find("cam") and not name:find("room") and not name:find("cell") and not name:find("monitor") then
+             if adding then
+                SCPCandidateCache[descendant] = true
+             else
+                SCPCandidateCache[descendant] = nil
+             end
+             return
+        end
+
+        -- Filter out useless visuals
+        if name:find("sign") or name:find("terminal") or name:find("button") or name:find("door") or name:find("class") or name:find("containment") or name:find("tesla") or name:find("camera") or name:find("bowl") or name:find("cc") or name:find("pipe") or name:find("label") or name:find("screen") or name:find("monitor") or name:find("console") or name:find("glass") or name:find("window") or name:find("wall") or name:find("floor") or name:find("ceiling") or name:find("light") or name:find("lamp") or name:find("shelf") or name:find("rack") or name:find("cabinet") or name:find("box") or name:find("crate") or name:find("966") or name:find("299") or name:find("2950") or name:find("082") or name:find("180") or name:find("table") or name:find("chair") or name:find("desk") or name:find("furniture") or name:find("prop") or name:find("decoration") or name:find("item") or name:find("object") or name:find("mesh") or name:find("part") or name:find("model") or name:find("base") or name:find("platform") or name:find("structure") or name:find("building") or name:find("room") or name:find("chamber") or name:find("cell") or name:find("gate") or name:find("barrier") or name:find("wall") or name:find("floor") or name:find("ceiling") then
+            if adding then
+                SCPCandidateCache[descendant] = nil
+            end
+            return
+        end
+
+        if adding then
+            SCPCandidateCache[descendant] = true
+        else
+            SCPCandidateCache[descendant] = nil
+        end
+    end
+end
+
+workspace.DescendantAdded:Connect(function(d) updateSCPCandidate(d, true) end)
+workspace.DescendantRemoving:Connect(function(d) updateSCPCandidate(d, false) end)
+task.spawn(function()
+    local descendants = workspace:GetDescendants()
+    local batchSize = 1000
+    for i, d in ipairs(descendants) do
+        updateSCPCandidate(d, true)
+        if i % batchSize == 0 then task.wait() end
+    end
+end)
+
+-- Silent Aim Logic
+local function getPlayersForSilent() 
+    local entities = {} 
+    for _, child in ipairs(workspace:GetChildren()) do 
+        if child:IsA("Model") and child:FindFirstChildOfClass("Humanoid") then 
+            table.insert(entities, child) 
+        elseif child.Name == "HurtEffect" then 
+            for _, hurtPlayer in ipairs(child:GetChildren()) do 
+                if hurtPlayer.ClassName ~= "Highlight" then 
+                    table.insert(entities, hurtPlayer) 
+                end 
+            end 
+        end 
+    end 
+    return entities 
+end
+
+local function getPredictedHeadPosition(player)
+    local char = player
+    if player:IsA("Player") then char = player.Character end
+    if not char then return nil end
+
+    local part = getPartSafe(char, selectedPart) 
+    if not part then part = char:FindFirstChild("Head") end
+    if not part then part = char:FindFirstChild("HumanoidRootPart") end
+    if not part then part = char.PrimaryPart end
+    
+    if not part then
+         for _, ch in ipairs(char:GetChildren()) do
+             if ch:IsA("BasePart") then part = ch break end
+         end
+    end
+
+    if not part then return nil end
+
+    local humanoidRootPart = char:FindFirstChild("HumanoidRootPart") or char.PrimaryPart
+    local velocity = Vector3.new(0,0,0)
+    if humanoidRootPart and humanoidRootPart:IsA("BasePart") then
+         velocity = humanoidRootPart.Velocity
+    end
+
+    local predictedPosition = part.Position + (velocity * 0)
+    return predictedPosition
+end
+
+local CachedSilentTarget = nil
+local LastSilentTargetUpdate = 0
+local SILENT_TARGET_UPDATE_RATE = 0.05
+
+local function UpdateSilentTarget()
+    if tick() - LastSilentTargetUpdate < SILENT_TARGET_UPDATE_RATE then return end
+    LastSilentTargetUpdate = tick()
+    
+    local closest, closestDistance = nil, math.huge 
+    local character = LocalPlayer.Character 
+    if not character then 
+        CachedSilentTarget = nil
+        getgenv().SilentAimTarget = nil
+        return 
+    end 
+
+    local center = Vector2.new(Camera.ViewportSize.X / 2, Camera.ViewportSize.Y / 2)
+    local currentCameraFOV = Camera.FieldOfView
+    local fovScale = currentCameraFOV / (defaultCameraFOV or 70)
+    local fovRadius = (SilentTargetFOV or 65) * 5 * fovScale 
+
+    for _, char in ipairs(getPlayersForSilent()) do 
+        if char == character then continue end 
+        if not char:FindFirstChild("HumanoidRootPart") then continue end 
+        
+        local player = Players:GetPlayerFromCharacter(char)
+        if player then
+            if not ValidateTarget(LocalPlayer, player) then continue end
+        else
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if not hum or (Settings.SilentAim.deathCheck and hum.Health <= 0) then continue end
+            if Settings.SilentAim.forcefieldCheck and char:FindFirstChildOfClass("ForceField") then continue end
+        end
+
+        if Settings.SilentAim.wallCheck and not PerformLineOfSightCheck(char) then continue end
+
+        local headPosition = getPredictedHeadPosition(char)
+        if not headPosition then continue end
+
+        local position, onScreen = Camera:WorldToViewportPoint(headPosition) 
+        if not onScreen then continue end 
+
+        local screenPoint = Vector2.new(position.X, position.Y)
+        local distance = (center - screenPoint).Magnitude 
+
+        if distance <= fovRadius and distance < closestDistance then 
+            closest = char 
+            closestDistance = distance 
+        end 
+    end 
+    
+    -- SCP Logic
+    for scpModel, _ in pairs(SCPCandidateCache) do
+        if scpModel and scpModel.Parent then
+            local scpName = string.lower(scpModel.Name)
+            local allowed = false
+            -- Allow common SCPs and their variants
+            if (scpName:find("049") or scpName:find("008") or scpName:find("016") or 
+               scpName:find("096") or scpName:find("173") or scpName:find("002") or
+               scpName:find("076") or scpName:find("682"))
+               and not scpName:find("camera") and not scpName:find("monitor") and not scpName:find("cam") and not scpName:find("door") and not scpName:find("sign") and not scpName:find("button") and not scpName:find("terminal") and not scpName:find("tesla") and not scpName:find("gate") and not scpName:find("containment") and not scpName:find("chamber") and not scpName:find("glass") then
+                allowed = true
+            end
+
+            if allowed then
+                local part = getPartSafe(scpModel, selectedPart) or scpModel.PrimaryPart or scpModel:FindFirstChild("HumanoidRootPart")
+                if not part then
+                    for _, ch in ipairs(scpModel:GetChildren()) do
+                        if ch:IsA("BasePart") then part = ch break end
+                    end
+                end
+
+                local hum = scpModel:FindFirstChildOfClass("Humanoid")
+                local isAlive = true
+                if hum then
+                    isAlive = hum.Health > 0
+                else
+                    if part and part.Anchored then
+                         isAlive = false
+                    end
+                end
+
+                if part and isAlive then
+                    local targetPos = part.Position
+                    
+                    local position, onScreen = Camera:WorldToViewportPoint(targetPos)
+                    if onScreen then
+                        local screenPoint = Vector2.new(position.X, position.Y)
+                        local distance = (center - screenPoint).Magnitude
+                        
+                        if distance <= fovRadius and distance < closestDistance then
+                            if Settings.SilentAim.wallCheck and not PerformLineOfSightCheck(scpModel) then
+                                -- Skip if wall check fails
+                            else
+                                closest = scpModel
+                                closestDistance = distance
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    
+    CachedSilentTarget = closest
+    getgenv().SilentAimTarget = closest
+end
+
+RunService.Heartbeat:Connect(function()
+    local shouldUpdate = Settings.SilentAim.enabled
+
+    if shouldUpdate then
+        local char = LocalPlayer.Character
+        if not char or not char:FindFirstChildOfClass("Tool") then
+            shouldUpdate = false
+        end
+    end
+
+    if shouldUpdate then
+        UpdateSilentTarget()
+    else
+        CachedSilentTarget = nil
+        getgenv().SilentAimTarget = nil
+    end
+end)
+
+-- Update FOV Circle
+RunService.RenderStepped:Connect(function()
+    if FOVCircle then
+        local screenCenter = Camera.ViewportSize / 2
+        FOVCircle.Position = Vector2.new(screenCenter.X, screenCenter.Y)
+        
+        -- Convert FOV degrees to screen pixels
+        local currentCameraFOV = Camera.FieldOfView
+        local fovScale = currentCameraFOV / (defaultCameraFOV or 70)
+        local fovRadius = (SilentTargetFOV or 65) * 5 * fovScale
+        
+        FOVCircle.Radius = fovRadius
+        FOVCircle.Visible = Settings.SilentAim.showFOV
+    end
+end)
+
+local function getClosestPlayer() 
+    return CachedSilentTarget
+end 
+
+if USE_NAMECALL_HOOK then
+    local mt = getrawmetatable(game)
+    local old_namecall = mt.__namecall
+    setreadonly(mt, false)
+
+    mt.__namecall = newcclosure(function(self, ...)
+        local args = {...}
+        local method = getnamecallmethod()
+
+        local silentEnabled = Settings.SilentAim.enabled
+
+        if method == "Raycast" and (self == workspace or tostring(self) == "Workspace") and silentEnabled and not checkcaller() then
+            local char = LocalPlayer.Character
+            local tool = char and char:FindFirstChildOfClass("Tool")
+            if not tool then
+                    if setnamecallmethod then setnamecallmethod(method) end
+                    return old_namecall(self, unpack(args))
+            end
+            local origin = args[1]
+            local direction = args[2]
+            
+            if typeof(origin) == "Vector3" and typeof(direction) == "Vector3" then
+                local char = LocalPlayer.Character
+                if char and typeof(char) == "Instance" and origin then
+                    local head = char:FindFirstChild("Head")
+                    if head and (origin - head.Position).Magnitude < 15 then
+                         local camLook = Camera.CFrame.LookVector
+                         if direction.Unit:Dot(camLook) > 0.5 then
+                             local closest = getClosestPlayer()
+                             if closest then
+                                 local predictedHead = getPredictedHeadPosition(closest)
+                                 if predictedHead then
+                                     local newDir = (predictedHead - origin).Unit * direction.Magnitude
+                                     if newDir.X == newDir.X then
+                                         args[2] = newDir
+                                     end
+                                 end
+                             end
+                         end
+                    end
+                end
+            end
+        end
+
+        if setnamecallmethod then setnamecallmethod(method) end
+        return old_namecall(self, unpack(args))
+    end)
+    
+    setreadonly(mt, true)
+end
+
+UserInputService.InputBegan:Connect(function(input, gs)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and not gs then
+        leftMouseDown = true
+        task.spawn(function()
+            while leftMouseDown and Settings.SilentAim.enabled do
+                local lpchar = LocalPlayer.Character
+                local head = lpchar and lpchar:FindFirstChild("Head")
+                if not head then
+                    break
+                end
+                local best, bd = nil, math.huge
+                local camDir = Camera.CFrame.LookVector
+                for _, p in ipairs(Players:GetPlayers()) do
+                    if p ~= LocalPlayer and ValidateTarget(LocalPlayer, p) and p.Character and p.Character:FindFirstChild("Humanoid") then
+                        local part = getPartSafe(p.Character, selectedPart) or getPartSafe(p.Character, "Head")
+                        if part then
+                            local dirTo = (part.Position - head.Position).Unit
+                            local ang = math.acos(math.clamp(camDir:Dot(dirTo), -1, 1))
+                            local currentFov = (workspace.CurrentCamera and workspace.CurrentCamera.FieldOfView) or (defaultCameraFOV or 70)
+                            local fovScale = currentFov / (defaultCameraFOV or 70)
+                            local maxAng = math.rad(((SilentTargetFOV or 65) * fovScale) / 2)
+                            if ang <= maxAng then
+                                local dist = (part.Position - head.Position).Magnitude
+                                if dist < bd then
+                                    best, bd = p, dist
+                                end
+                            end
+                        end
+                    end
+                end
+                if best and best.Character then
+                    local targetPart = getPartSafe(best.Character, selectedPart) 
+                        or best.Character:FindFirstChild("Head") 
+                        or best.Character:FindFirstChild("HumanoidRootPart") 
+                        or best.Character.PrimaryPart
+                    if targetPart then
+                        local origin = head.Position
+                        local targetPos = targetPart.Position
+                        local canFire = true
+                        local dir = (targetPos - origin).Unit
+                        local dist = (targetPos - origin).Magnitude
+                        local rp = RaycastParams.new()
+                        rp.FilterType = Enum.RaycastFilterType.Blacklist
+                        rp.FilterDescendantsInstances = {LocalPlayer.Character}
+                        local rr = workspace:Raycast(origin, dir * dist, rp)
+                        if rr and rr.Instance and rr.Instance.Parent ~= best.Character and rr.Instance.Name ~= "Handle" then
+                            canFire = false
+                        end
+                        if canFire then
+                            getgenv().SilentAimTarget = best
+                        end
+                    end
+                else
+                    getgenv().SilentAimTarget = nil
+                end
+                task.wait(SilentRate)
+            end
+        end)
+    end
+end)
+
+UserInputService.InputEnded:Connect(function(input, gs)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and not gs then
+        leftMouseDown = false
+    end
+end)
+
+local SilentAimTab = Window:CreateTab("Silent Aim", "crosshair")
+
+SilentAimTab:CreateSection("Main Options")
+
+SilentAimToggle = SilentAimTab:CreateToggle({
+    Name = "Enable Silent Aim",
+    CurrentValue = Settings.SilentAim.enabled,
+    Callback = function(Value)
+        Settings.SilentAim.enabled = Value
+    end,
+})
+table.insert(allToggles, SilentAimToggle)
+
+SilentAimFOVSlider = SilentAimTab:CreateSlider({
+    Name = "Silent Aim FOV",
+    Range = {10, 200},
+    Increment = 1,
+    Suffix = "°",
+    CurrentValue = Settings.SilentAim.fov,
+    Callback = function(Value)
+        Settings.SilentAim.fov = Value
+        SilentTargetFOV = Value
+    end,
+})
+
+ShowFOVToggle = SilentAimTab:CreateToggle({
+    Name = "Show FOV Circle",
+    CurrentValue = Settings.SilentAim.showFOV,
+    Callback = function(Value)
+        Settings.SilentAim.showFOV = Value
+        FOVCircle.Visible = Value
+    end,
+})
+table.insert(allToggles, ShowFOVToggle)
+
+SilentAimTab:CreateSection("Targeting Options")
+
+SilentAimTeamCheck = SilentAimTab:CreateToggle({
+    Name = "Team Check",
+    CurrentValue = Settings.SilentAim.teamCheck,
+    Callback = function(Value)
+        Settings.SilentAim.teamCheck = Value
+    end,
+})
+
+SilentAimGunCheck = SilentAimTab:CreateToggle({
+    Name = "Require Gun Equipped",
+    CurrentValue = Settings.SilentAim.requireGunEquipped,
+    Callback = function(Value)
+        Settings.SilentAim.requireGunEquipped = Value
+    end,
+})
+
+SilentAimWallCheck = SilentAimTab:CreateToggle({
+    Name = "Wall Check",
+    CurrentValue = Settings.SilentAim.wallCheck,
+    Callback = function(Value)
+        Settings.SilentAim.wallCheck = Value
+    end,
+})
+
+SilentAimDeathCheck = SilentAimTab:CreateToggle({
+    Name = "Death Check",
+    CurrentValue = Settings.SilentAim.deathCheck,
+    Callback = function(Value)
+        Settings.SilentAim.deathCheck = Value
+    end,
+})
+
+local ChatTab = Window:CreateTab("Misc", "loader-circle")
+
+local RunService = game:GetService("RunService")
+
+local OriginalSizes = {}
+local ActivePlayers = {}
+local HitboxSettings = {
+    Enabled = false,
+    HeadScale = 0.3,
+    BodyScale = 0.15,
+    UpdateRate = 0.2
+}
+
+local ToggleLock = false
+
+local function ModifyHitbox(player)
+    if ToggleLock then return end
+    if not player or player == LocalPlayer or not player.Character then return end
+
+    local character = player.Character
+    ActivePlayers[player] = true
+
+    local head = character:FindFirstChild("Head")
+    if head then
+        if not OriginalSizes[head] then
+            OriginalSizes[head] = head.Size
+        end
+        head.Size = OriginalSizes[head] * (1 + HitboxSettings.HeadScale)
+    end
+
+    for _, part in ipairs(character:GetChildren()) do
+        if part:IsA("BasePart") and part ~= head then
+            if not OriginalSizes[part] then
+                OriginalSizes[part] = part.Size
+            end
+            part.Size = OriginalSizes[part] * (1 + HitboxSettings.BodyScale)
+        end
+    end
+end
+
+local function RestoreHitbox(player)
+    if ToggleLock then return end
+    if not player then return end
+
+    if player.Character then
+        for part, originalSize in pairs(OriginalSizes) do
+            if part and part.Parent and part.Parent == player.Character then
+                part.Size = originalSize
+            end
+        end
+    end
+
+    ActivePlayers[player] = nil
+end
+
+local function FullCleanup()
+    for player, _ in pairs(ActivePlayers) do
+        if player and player.Character then
+            for part, originalSize in pairs(OriginalSizes) do
+                if part and part.Parent == player.Character then
+                    part.Size = originalSize
+                end
+            end
+        end
+    end
+    table.clear(ActivePlayers)
+    table.clear(OriginalSizes)
+end
+
+ExpanderToggle = ChatTab:CreateToggle({
+    Name = "Hitbox Expander",
+    CurrentValue = Settings.Misc.hitboxExpanderEnabled,
+    Flag = "HitboxToggle",
+    Callback = function(value)
+        if ToggleLock then return end
+        ToggleLock = true
+
+        Settings.Misc.hitboxExpanderEnabled = value
+        HitboxSettings.Enabled = value
+
+        if value then
+
+            for _, player in ipairs(getPlayers()) do
+                if player ~= LocalPlayer then
+                    ModifyHitbox(player)
+                end
+            end
+        else
+
+            FullCleanup()
+        end
+
+        ToggleLock = false
+    end
+})
+
+HeadSizeSlider = ChatTab:CreateSlider({
+    Name = "Head Size",
+    Range = {0, 0.65},
+    Increment = 0.05,
+    Suffix = "x",
+    CurrentValue = Settings.Misc.headScale,
+    Flag = "HeadSizeSlider",
+    Callback = function(value)
+        Settings.Misc.headScale = value
+        HitboxSettings.HeadScale = value
+    end
+})
+
+BodySizeSlider = ChatTab:CreateSlider({
+    Name = "Body Size",
+    Range = {0, 0.95},
+    Increment = 0.05,
+    Suffix = "x",
+    CurrentValue = Settings.Misc.bodyScale,
+    Flag = "BodySizeSlider",
+    Callback = function(value)
+        Settings.Misc.bodyScale = value
+        HitboxSettings.BodyScale = value
+    end
+})
+
+local function TrackPlayer(player)
+    if player == LocalPlayer then return end
+
+    player.CharacterAdded:Connect(function(character)
+        if HitboxSettings.Enabled then
+            task.wait(0.5) 
+            ModifyHitbox(player)
+        end
+    end)
+
+    if player.Character and HitboxSettings.Enabled then
+        task.defer(function()
+            ModifyHitbox(player)
+        end)
+    end
+end
+
+for _, player in ipairs(getPlayers()) do
+    TrackPlayer(player)
+end
+
+Players.PlayerAdded:Connect(TrackPlayer)
+
+Players.PlayerRemoving:Connect(function(player)
+    if ActivePlayers[player] then
+        RestoreHitbox(player)
+    end
+end)
+
+local lastUpdate = 0
+RunService.Heartbeat:Connect(function()
+    if not HitboxSettings.Enabled then return end
+
+    local now = tick()
+    if now - lastUpdate < HitboxSettings.UpdateRate then return end
+    lastUpdate = now
+
+    for player, _ in pairs(ActivePlayers) do
+        if player and player.Character then
+            ModifyHitbox(player)
+        else
+            ActivePlayers[player] = nil
+        end
+    end
+
+    if HitboxSettings.Enabled then
+        for _, player in ipairs(getPlayers()) do
+            if player ~= LocalPlayer and not ActivePlayers[player] and player.Character then
+                ModifyHitbox(player)
+            end
+        end
+    end
+end)
+
+ChatSpyToggle = ChatTab:CreateToggle({
+    Name = "ChatSpy",
+    CurrentValue = Settings.Misc.chatSpyEnabled,
+    Callback = function(Value)
+        Settings.Misc.chatSpyEnabled = Value
+        local TextChatService = game:GetService("TextChatService")
+
+        if Value then
+            TextChatService.ChatWindowConfiguration.Enabled = true
+        else
+            TextChatService.ChatWindowConfiguration.Enabled = false
+        end
+   end
+})
+
+RagdollToggle = ChatTab:CreateToggle({
+    Name = "Ragdoll",
+    CurrentValue = false,
+    Flag = "Toggle1",
+    Callback = function(Value)
+        local player = game.Players.LocalPlayer
+        local character = player.Character or player.CharacterAdded:Wait()
+        local humanoid = character:FindFirstChildOfClass("Humanoid")
+
+        if Value then
+            if humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.Physics)
+                for _, part in pairs(character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part.Anchored = false
+                        part.CanCollide = true
+                    end
+                end
+            end
+        else
+            if humanoid then
+                humanoid:ChangeState(Enum.HumanoidStateType.GettingUp)
+                for _, part in pairs(character:GetChildren()) do
+                    if part:IsA("BasePart") then
+                        part.Anchored = false
+                        part.CanCollide = true
+                    end
+                end
+            end
+        end
+    end,
+})
+
+local antiAimEnabled = false
+
+local Anitaim1 = ChatTab:CreateToggle({
+    Name = "Anti-Aim1",
+    CurrentValue = Settings.Misc.antiAim1Enabled,
+    Flag = "AntiAimToggle",
+    Callback = function(Value)
+        Settings.Misc.antiAim1Enabled = Value
+        antiAimEnabled = Value
+    end,
+})
+
+RunService.Heartbeat:Connect(function()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+    if antiAimEnabled then
+        local t = tick()
+        local yaw = math.rad(600 * RunService.Heartbeat:Wait())
+        local jitterX = math.rad(math.sin(t * 50) * 1.5)
+        local jitterZ = math.rad(math.cos(t * 30) * 1.5)
+        local desync = math.sin(t * 4)
+        local jiggle = math.sin(t * 15) * 0.1
+
+        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(LocalPlayer.Character.HumanoidRootPart.Position + Vector3.new(jiggle + desync * 0.01, 0, 0)) * CFrame.Angles(jitterX, yaw + math.sin(t * 25) * 0.5, jitterZ)
+    end
+end)
+
+_G.AntiAim2Enabled = false
+
+local Antiaim2 = ChatTab:CreateToggle({
+    Name = "Anti-Aim2",
+    CurrentValue = Settings.Misc.antiAim2Enabled,
+    Flag = "AntiAim2Toggle",
+    Callback = function(Value)
+        Settings.Misc.antiAim2Enabled = Value
+        _G.AntiAim2Enabled = Value
+    end,
+})
+
+RunService.Heartbeat:Connect(function()
+    if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return end
+
+    if _G.AntiAim2Enabled then
+        local t = tick()
+        local yaw = math.rad(650 * RunService.Heartbeat:Wait())
+        local jitterX = math.rad(math.sin(t * 60) * 2)
+        local jitterZ = math.rad(math.cos(t * 40) * 2)
+        local desync = math.sin(t * 6)
+        local jiggle = math.sin(t * 20) * 0.15
+        local sideSwing = math.sin(t * 10) * 0.3
+
+        LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(
+            LocalPlayer.Character.HumanoidRootPart.Position + Vector3.new(jiggle + desync * 0.015 + sideSwing, 0, sideSwing)
+        ) * CFrame.Angles(jitterX, yaw + math.sin(t * 35) * 0.7, jitterZ)
+    end
+end)
+
+ChatTab:CreateButton({
+    Name = "Infinite Yield",
+    Callback = function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/EdgeIY/infiniteyield/master/source"))()
+    end
+})
+
+FOVSlider = ChatTab:CreateSlider({
+    Name = "Camera FOV",
+    Range = {30, 120},
+    Increment = 1,
+    CurrentValue = Settings.Misc.fovValue,
+    Flag = "CameraFOV",
+    Callback = function(Value)
+        Settings.Misc.fovValue = Value
+        _G.FOVValue = Value
+        if not _G.FOVConnection then
+            _G.FOVConnection = game:GetService("RunService").RenderStepped:Connect(function()
+                local camera = game.Workspace.CurrentCamera
+                if camera and _G.FOVValue then
+                    camera.FieldOfView = _G.FOVValue
+                end
+            end)
+        end
+    end
+})
+
+ChatTab:CreateLabel("Deafult is 70 btw")
+
+FakeLagToggle = ChatTab:CreateToggle({
+    Name = "Fake Lag",
+    CurrentValue = Settings.Misc.fakeLagEnabled,
+    Flag = "FakeLag",
+    Callback = function(Value)
+        Settings.Misc.fakeLagEnabled = Value
+        enabled = Value
+        if Value then
+            spawn(function()
+                while enabled do
+                    local character = game.Players.LocalPlayer.Character
+                    if character then
+                        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+                        if humanoidRootPart then
+                            humanoidRootPart.Anchored = true
+                            wait(0.04)
+                            humanoidRootPart.Anchored = false
+                        end
+                    end
+                    wait(0.05)
+                end
+            end)
+        else
+            local character = game.Players.LocalPlayer.Character
+            if character and character:FindFirstChild("HumanoidRootPart") then
+                character.HumanoidRootPart.Anchored = false
+            end
+        end
+    end
+})
+
+local autoJumpEnabled = false
+AutoJumpToggle = ChatTab:CreateToggle({
+    Name = "Auto Jump",
+    CurrentValue = Settings.Misc.autoJumpEnabled,
+    Flag = "AutoJump",
+    Callback = function(Value)
+        Settings.Misc.autoJumpEnabled = Value
+        autoJumpEnabled = Value
+        if Value then
+            spawn(function()
+                while autoJumpEnabled do
+                    local character = game.Players.LocalPlayer.Character
+                    if character and character:FindFirstChild("Humanoid") then
+                        local humanoid = character.Humanoid
+                        if humanoid.MoveDirection.Magnitude > 0 then
+                            humanoid.Jump = true
+                        end
+                    end
+                    wait(0.2)
+                end
+            end)
+        end
+    end
+})
+
+AntiAfkToggle = ChatTab:CreateToggle({
+    Name = "Anti AFK",
+    CurrentValue = Settings.Misc.antiAfkEnabled,
+    Flag = "AntiAfkToggle",
+    Callback = function(Value)
+        Settings.Misc.antiAfkEnabled = Value
+        if Value then
+            local vu = game:GetService("VirtualUser")
+            game:GetService("Players").LocalPlayer.Idled:connect(function()
+                vu:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+                wait(1)
+                vu:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
+            end)
+        end
+    end,
+})
+
+local antivoid22222 = ChatTab:CreateToggle({
+Name = "Anti Void",
+CurrentValue = false,
+Flag = "AntiVoidToggle", 
+Callback = function(Value)
+    antiVoidEnabled = Value
+
+    if Value then
+        local player = game.Players.LocalPlayer
+        local checkInterval = 0.1
+        local partSize = Vector3.new(4, 1, 4)
+        local partColor = Color3.new(1, 0, 0)
+        local spawnedParts = {}
+        local debounce = 0
+        local heartbeatConnection
+
+        player.CharacterAdded:Connect(function(character)
+            local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+
+            if heartbeatConnection then
+                heartbeatConnection:Disconnect()
+            end
+
+            heartbeatConnection = game:GetService("RunService").Heartbeat:Connect(function(deltaTime)
+                debounce = debounce + deltaTime
+                if debounce >= checkInterval then
+                    debounce = 0
+                        if antiVoidEnabled then
+                        local ray = Ray.new(humanoidRootPart.Position, Vector3.new(0, -1000, 0))
+                        local hitPart, hitPosition = workspace:FindPartOnRay(ray, player.Character)
+
+                        if not hitPart then
+                            local part = Instance.new("Part")
+                            part.Size = partSize
+                            part.Position = humanoidRootPart.Position - Vector3.new(0, partSize.Y / 2 + 1, 0)
+                            part.Anchored = true
+                            part.CanCollide = true
+                            part.BrickColor = BrickColor.new(partColor)
+                            part.Transparency = 1
+                            part.Parent = workspace
+                            table.insert(spawnedParts, part)
+
+                            local isStandingOnPart = false
+                            while not isStandingOnPart do
+                                wait(0.1)
+                                if humanoidRootPart.Position.Y <= part.Position.Y + partSize.Y / 2 then
+                                    isStandingOnPart = true
+                                end
+                            end
+                            part:Destroy()
+                        end
+                    end
+                end
+            end)
+        end)
+
+        if player.Character then
+            local humanoidRootPart = player.Character:WaitForChild("HumanoidRootPart")
+            if not heartbeatConnection then
+                heartbeatConnection = game:GetService("RunService").Heartbeat:Connect(function(deltaTime)
+                    debounce = debounce + deltaTime
+                    if debounce >= checkInterval then
+                        debounce = 0
+                        if antiVoidEnabled then
+                            local ray = Ray.new(humanoidRootPart.Position, Vector3.new(0, -1000, 0))
+                            local hitPart, hitPosition = workspace:FindPartOnRay(ray, player.Character)
+
+                            if not hitPart then
+                                local part = Instance.new("Part")
+                                part.Size = partSize
+                                part.Position = humanoidRootPart.Position - Vector3.new(0, partSize.Y / 2 + 1, 0)
+                                part.Anchored = true
+                                part.CanCollide = true
+                                part.BrickColor = BrickColor.new(partColor)
+                                part.Transparency = 1
+                                part.Parent = workspace
+                                table.insert(spawnedParts, part)
+
+                                local isStandingOnPart = false
+                                while not isStandingOnPart do
+                                    wait(0.1)
+                                    if humanoidRootPart.Position.Y <= part.Position.Y + partSize.Y / 2 then
+                                        isStandingOnPart = true
+                                    end
+                                end
+                                part:Destroy()
+                            end
+                        end
+                    end
+                end)
+            end
+        end
+
+    else
+        if heartbeatConnection then
+            heartbeatConnection:Disconnect()
+        end
+    end
+end,
+})
+
+local Paragraph = ChatTab:CreateParagraph({Title = "Fake Chat", Content = "Z to send or press button below"})
+local fakechatenabled = false
+local notiffenabled = true
+local targetplayer
+local message
+local Chat = game:GetService("Chat")
+
+local UserInputService = game:GetService("UserInputService")
+
+local function sendFakeMessage()
+    if not fakechatenabled then return end
+
+    local target = nil
+    local inputLower = (targetplayer or ""):lower()
+
+    for _, plr in ipairs(getPlayers()) do
+        if plr.Name:lower():sub(1, #inputLower) == inputLower or plr.DisplayName:lower():sub(1, #inputLower) == inputLower then
+            target = plr
+            break
+        end
+    end
+
+    if not target then
+        if notiffenabled then
+            Rayfield:Notify({
+                Title = "Can't find the player",
+                Content = "",
+                Duration = 3,
+                Image = 4483362458,
+            })
+        end
+        return
+    end
+
+    if target.Character then
+        Chat:Chat(target.Character, message)
+    end
+end
+
+ChatTab:CreateToggle({
+    Name = "Enabled",
+    CurrentValue = false,
+    Flag = "Toggle1",
+    Callback = function(Value)
+        fakechatenabled = Value
+    end,
+})
+
+ChatTab:CreateToggle({
+    Name = "Send Notifications",
+    CurrentValue = true,
+    Flag = "Toggle2",
+    Callback = function(Value)
+        notiffenabled = Value
+    end,
+})
+
+ChatTab:CreateInput({
+    Name = "Target Player",
+    CurrentValue = "",
+    PlaceholderText = "name",
+    RemoveTextAfterFocusLost = false,
+    Flag = "Input1",
+    Callback = function(Text)
+        targetplayer = Text
+    end,
+})
+
+ChatTab:CreateInput({
+    Name = "Message",
+    CurrentValue = "",
+    PlaceholderText = "message",
+    RemoveTextAfterFocusLost = false,
+    Flag = "Input2",
+    Callback = function(Text)
+        message = Text
+    end,
+})
+
+UserInputService.InputBegan:Connect(function(input)
+    if input.KeyCode == Enum.KeyCode.Z then
+        sendFakeMessage()
+    end
+end)
+
+ChatTab:CreateButton({
+    Name = "Send Message",
+    Callback = function()
+        sendFakeMessage()
+    end,
+})
+ChatTab:CreateLabel("if you rejoin with this button you wont be able to execute the script, this is for rejoining and then playing without cheats")
+ChatTab:CreateButton({
+    Name = "Rejoin Current Server",
+    Callback = function()
+        game:GetService("TeleportService"):TeleportToPlaceInstance(game.PlaceId, game.JobId, game:GetService("Players").LocalPlayer)
+    end,
+})
+
+FPSLimitSlider = ChatTab:CreateSlider({
+    Name = "FPS Limit",
+    Range = {5, 500},
+    Increment = 5,
+    Suffix = "FPS",
+    CurrentValue = Settings.Misc.fpsLimit,
+    Flag = "Slider1", 
+    Callback = function(Value)
+        Settings.Misc.fpsLimit = Value
+        setfpscap(Value)
+    end,
+})
+
+local MapTab = Window:CreateTab("Map Modification","map")
+
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+
+local FullBrightStrengthCap = 5
+
+FullBrightToggle = MapTab:CreateToggle({
+    Name = "Full Bright",
+    CurrentValue = Settings.Map.fullBrightEnabled,
+    Flag = "FullBrightEnabled",
+    Callback = function(Value)
+        Settings.Map.fullBrightEnabled = Value
+        if Value then
+            Lighting.Ambient = Color3.fromRGB(255, 255, 255)
+            Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+            Lighting.Brightness = FullBrightStrengthCap * (math.clamp(Settings.Map.fullBrightPercent, 0, 100) / 100)
+            Lighting.ShadowSoftness = 0
+            Lighting.GlobalShadows = false
+        else
+            Lighting.Ambient = Color3.fromRGB(127, 127, 127)
+            Lighting.OutdoorAmbient = Color3.fromRGB(127, 127, 127)
+            Lighting.Brightness = 1.0
+            Lighting.ShadowSoftness = 0.3
+            Lighting.GlobalShadows = true
+        end
+    end,
+})
+
+FullbrightStrengthSlider = MapTab:CreateSlider({
+    Name = "Fullbright Strength (Safe %)",
+    Range = {0, 100},
+    Increment = 1,
+    Suffix = "%",
+    CurrentValue = Settings.Map.fullBrightPercent,
+    Callback = function(Value)
+        Settings.Map.fullBrightPercent = math.clamp(Value, 0, 100)
+        FullBrightPercent = Settings.Map.fullBrightPercent
+        if FullBrightToggle and FullBrightToggle.CurrentValue then
+            Lighting.Brightness = FullBrightStrengthCap * (Settings.Map.fullBrightPercent / 100)
+        end
+    end,
+})
+
+local function isWall(part)
+    if not part:IsA("BasePart") then
+        return false
+    end
+
+    local nameLower = string.lower(part.Name)
+    if string.find(nameLower, "wall") or 
+       string.find(nameLower, "barrier") or
+       string.find(nameLower, "fence") then
+        return true
+    end
+
+    local orientation = part.Orientation
+    if (math.abs(orientation.X) > 80 or math.abs(orientation.Z) > 80) then
+        if part.Size.Y > part.Size.X and part.Size.Y > part.Size.Z then
+            return true
+        end
+    end
+
+    if (part.Size.X < 3 or part.Size.Z < 3) and part.Size.Y > 5 then
+        return true
+    end
+
+    return false
+end
+
+local function isDoor(part)
+    if not part:IsA("BasePart") then
+        return false
+    end
+
+    local nameLower = string.lower(part.Name)
+    if string.find(nameLower, "door") or 
+       string.find(nameLower, "gate") or
+       string.find(nameLower, "entrance") then
+        return true
+    end
+
+    if part.Parent and string.lower(part.Parent.Name):find("door") then
+        return true
+    end
+
+    return false
+end
+
+MapTab:CreateButton({
+   Name = "Simplify Map",
+   Info = "Destroys only some walls and doors",
+   Callback = function()
+        local wallsDestroyed = 0
+        local doorsDestroyed = 0
+
+        local descendants = workspace:GetDescendants()
+        for _, obj in ipairs(descendants) do
+            if isWall(obj) then
+                wallsDestroyed = wallsDestroyed + 1
+                obj:Destroy()
+            elseif isDoor(obj) then
+                doorsDestroyed = doorsDestroyed + 1
+                obj:Destroy()
+            end
+        end
+
+        Rayfield:Notify({
+            Title = "DESTRUCTION COMPLETE",
+            Content = wallsDestroyed .. " walls and " .. doorsDestroyed .. " doors destroyed.",
+            Duration = 3
+        })
+   end,
+})
+
+MapTab:CreateButton({
+   Name = "Destroy All Doors",
+   Info = "Destroys all door-like parts",
+   Callback = function()
+        local doorsDestroyed = 0
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if isDoor(obj) then
+                doorsDestroyed = doorsDestroyed + 1
+                obj:Destroy()
+            end
+        end
+        Rayfield:Notify({
+            Title = "All Doors Destroyed",
+            Content = tostring(doorsDestroyed) .. " doors destroyed.",
+            Duration = 3
+        })
+   end,
+})
+
+local ModDetectionActive = false
+local ModDetectionConnection = nil
+local LoopRunning = false
+
+local function ModDetection(enabled)
+    if ModDetectionActive == enabled then
+        return
+    end
+
+    ModDetectionActive = enabled
+
+    local function CheckForMods()
+        if not ModDetectionActive then return false end
+
+        for _, Player in ipairs(getPlayers()) do
+            if Player:GetRankInGroup(5479038) >= 248 then
+
+                wait(0.5) 
+                game.Players.LocalPlayer:Kick("Mod detected! Mod name: " .. Player.Name)
+                return true
+            end
+        end
+        return false
+    end
+
+    if ModDetectionActive then
+        if CheckForMods() then return end
+
+        ModDetectionConnection = game.Players.PlayerAdded:Connect(function(Player)
+            if not ModDetectionActive then return end
+
+            if Player:GetRankInGroup(5479038) >= 248 then
+
+                wait(0.5) 
+                game.Players.LocalPlayer:Kick("Mod detected! Mod name: " .. Player.Name)
+            end
+        end)
+
+        if not LoopRunning then
+            LoopRunning = true
+            task.spawn(function()
+                while true do
+                    wait(10)
+                    if not ModDetectionActive then
+                        LoopRunning = false
+                        break
+                    end
+                    if CheckForMods() then break end
+                end
+            end)
+        end
+    else
+        if ModDetectionConnection then
+            ModDetectionConnection:Disconnect()
+            ModDetectionConnection = nil
+        end
+    end
+end
+
+local ModTab = Window:CreateTab("Anti-Moderation & Magnesium", "gavel")
+
+local DisableAllButton = ModTab:CreateButton({
+    Name = "Disable All Features",
+    Info = "Instantly disables all features",
+    Callback = function()
+        local disabledCount = 0
+
+        for _, toggle in pairs(allToggles) do
+            pcall(function()
+                if toggle and toggle.CurrentValue and toggle.Set then
+                    toggle:Set(false)
+                    disabledCount = disabledCount + 1
+                end
+            end)
+        end
+
+        pcall(function()
+            Rayfield:Notify({
+                Title = "All Features Disabled",
+                Content = disabledCount .. " features disabled",
+                Duration = 3,
+                Image = 4384403532
+            })
+        end)
+
+        print("Disabled " .. disabledCount .. " features") 
+    end,
+})
+
+AutoLeaveToggle = ModTab:CreateToggle({
+    Name = "Auto Leave",
+    CurrentValue = false,
+    Flag = "ModDetection",
+    Callback = function(Value)
+        ModDetection(Value)
+    end,
+})
+
+local notifyOnModJoin = true
+local disableOnModJoin = true
+
+ModJoinNotifyToggle = ModTab:CreateToggle({
+    Name = "Notify me when moderator joins the game",
+    CurrentValue = Settings.AntiMod.modJoinNotify,
+    Flag = "ModJoinNotify",
+    Callback = function(Value)
+        Settings.AntiMod.modJoinNotify = Value
+        notifyOnModJoin = Value
+    end
+})
+
+DisableOnModJoinToggle = ModTab:CreateToggle({
+    Name = "Disable everything when moderator joins the game",
+    CurrentValue = Settings.AntiMod.disableOnModJoin,
+    Flag = "DisableOnModJoin",
+    Callback = function(Value)
+        Settings.AntiMod.disableOnModJoin = Value
+        disableOnModJoin = Value
+    end
+})
+
+for _, player in ipairs(getPlayers()) do
+    if isModerator(player) then
+        if notifyOnModJoin then
+            Rayfield:Notify({
+                Title = "Moderator Detected!",
+                Content = "Mod Name: " .. player.Name,
+                Duration = 20,
+                Image = "gavel"
+            })
+        end
+        break 
+    end
+end
+
+Players.PlayerAdded:Connect(function(player)
+    if isModerator(player) then
+        if notifyOnModJoin then
+            Rayfield:Notify({
+                Title = "Moderator Detected!",
+                Content = "Mod Name: " .. player.Name,
+                Duration = 20,
+                Image = "gavel"
+            })
+        end
+        if disableOnModJoin then
+            disableAllToggles()
+            Rayfield:Notify({
+                Title = "Security Alert",
+                Content = "All toggles disabled due to moderator join.",
+                Duration = 3,
+                Image = 4384403532
+            })
+        end
+    end
+end)
+
+local ModDetectionActive = false
+local ModDetectionConnection = nil
+local LoopRunning = false
+
+local function ModDetection(enabled)
+    if ModDetectionActive == enabled then
+        return
+    end
+
+    ModDetectionActive = enabled
+
+    local function CheckForMods()
+        if not ModDetectionActive then return false end
+
+        for _, Player in ipairs(getPlayers()) do
+            if Player:GetRankInGroup(5479038) >= 248 then
+
+                wait(0.5) 
+                game.Players.LocalPlayer:Kick("Mod detected! Mod name: " .. Player.Name)
+                return true
+            end
+        end
+        return false
+    end
+
+    if ModDetectionActive then
+        if CheckForMods() then return end
+
+        ModDetectionConnection = game.Players.PlayerAdded:Connect(function(Player)
+            if not ModDetectionActive then return end
+
+            if Player:GetRankInGroup(5479038) >= 248 then
+
+                wait(0.5) 
+                game.Players.LocalPlayer:Kick("Mod detected! Mod name: " .. Player.Name)
+            end
+        end)
+
+        if not LoopRunning then
+            LoopRunning = true
+            task.spawn(function()
+                while true do
+                    wait(10)
+                    if not ModDetectionActive then
+                        LoopRunning = false
+                        break
+                    end
+                    if CheckForMods() then break end
+                end
+            end)
+        end
+    else
+        if ModDetectionConnection then
+            ModDetectionConnection:Disconnect()
+            ModDetectionConnection = nil
+        end
+    end
+end
+
+local resetOnModJoin = false
+local moderatorJoinCount = 0
+
+ResetOnModJoinToggle = ModTab:CreateToggle({
+    Name = "Reset character when moderator joins the game",
+    CurrentValue = Settings.AntiMod.resetOnModJoin,
+    Flag = "ResetOnModJoin",
+    Callback = function(Value)
+        Settings.AntiMod.resetOnModJoin = Value
+        resetOnModJoin = Value
+
+        if Value then
+            moderatorJoinCount = 0
+        end
+    end
+})
+
+Players.PlayerAdded:Connect(function(player)
+    if isModerator(player) and resetOnModJoin then
+        moderatorJoinCount = moderatorJoinCount + 1
+
+        if moderatorJoinCount == 1 then
+            pcall(function()
+                game.Players.LocalPlayer.Character.Humanoid.Health = 0
+            end)
+            Rayfield:Notify({
+                Title = "Character Reset",
+                Content = "Character reset due to first moderator join.",
+                Duration = 3,
+                Image = 4384403532
+            })
+        end
+    end
+end)
+
+radioAdvertiserEnabled = false
+radioConnections = {}
+lastMessageTime = 0
+
+local function setupAdvertisement(enabled)
+    radioAdvertiserEnabled = enabled
+
+    for _, connection in pairs(radioConnections) do
+        if connection and typeof(connection) == "RBXScriptConnection" then
+            connection:Disconnect()
+        end
+    end
+    radioConnections = {}
+
+    if not enabled then return end
+
+    local player = game.Players.LocalPlayer
+    local messages = {
+        "Get the SCP: Roleplay script with code HFcEpgkEVD in comms",
+        "Want SCP: Roleplay script? Type HFcEpgkEVD in comms",
+        "SCP: Roleplay script available! Use code HFcEpgkEVD",
+        "Type HFcEpgkEVD in comms for SCP: Roleplay script",
+        "Get script for SCP: Roleplay - enter HFcEpgkEVD in comms",
+        "Access SCP: Roleplay script - type HFcEpgkEVD in comms",
+        "SCP: Roleplay script code: HFcEpgkEVD in comms",
+        "Unlock SCP: Roleplay with code HFcEpgkEVD",
+        "For SCP: Roleplay script use HFcEpgkEVD in comms",
+        "Script for SCP: Roleplay - code HFcEpgkEVD in comms",
+        "Need SCP: Roleplay script? Type HFcEpgkEVD",
+        "SCP: Roleplay script finder: HFcEpgkEVD in comms",
+        "Type HFcEpgkEVD for SCP: Roleplay script access",
+        "Use code HFcEpgkEVD for SCP: Roleplay script",
+        "SCP: Roleplay script - code HFcEpgkEVD in comms",
+        "HFcEpgkEVD in comms for SCP: Roleplay script",
+        "Get your SCP: Roleplay script with HFcEpgkEVD",
+        "SCP: Roleplay script - just type HFcEpgkEVD in comms",
+        "Want script for SCP: Roleplay? Code: HFcEpgkEVD",
+    }
+
+    local recentMessages = {}
+    local maxRecentToTrack = 5
+
+    local function getNextMessage()
+        if #recentMessages >= #messages - 1 then
+            recentMessages = {}
+        end
+
+        local newIndex = math.random(1, #messages)
+        local attempts = 0
+        while table.find(recentMessages, newIndex) and attempts < 20 do
+            newIndex = math.random(1, #messages)
+            attempts += 1
+        end
+
+        table.insert(recentMessages, newIndex)
+        if #recentMessages > maxRecentToTrack then
+            table.remove(recentMessages, 1)
+        end
+
+        return messages[newIndex]
+    end
+
+    local function sendChatMessage(message)
+        task.wait(0.3)
+        pcall(function()
+            game:GetService("TextChatService").TextChannels.RBXGeneral:SendAsync(message)
+        end)
+    end
+
+    local function toolWatcher()
+        while radioAdvertiserEnabled do
+            local character = player.Character
+            if character then
+                local tool = character:FindFirstChildOfClass("Tool")
+                if tool and string.find(string.lower(tool.Name), "radio") then
+                    local now = tick()
+                    if now - lastMessageTime >= 2.5 then
+                        sendChatMessage(getNextMessage())
+                        lastMessageTime = now
+                    end
+                end
+            end
+            task.wait(0.5)
+        end
+    end
+
+    task.spawn(toolWatcher)
+
+    local characterAddedConn = player.CharacterAdded:Connect(function()
+        task.spawn(toolWatcher)
+    end)
+    table.insert(radioConnections, characterAddedConn)
+end
+
+RadioAdv = ModTab:CreateToggle({
+    Name = "Magnesium Radio Advertiser",
+    Info = "Automatically sends messages about SCP: Roleplay script when radio is equipped",
+    CurrentValue = false,
+    Flag = "SCPRoleplayAds",
+    Callback = setupAdvertisement
+})
+
+local function setupMagnesiumAdvertisement()
+    local messages = {
+        "Type HFcEpgkEVD in comms to get the SCP: Roleplay Magnesium Script",
+        "Want SCP: Roleplay Magnesium Script? Type HFcEpgkEVD in comms",
+        "SCP: Roleplay Magnesium Script available! Type HFcEpgkEVD in comms",
+        "Get access to SCP: Roleplay Magnesium Script - type HFcEpgkEVD in comms",
+        "SCP: Roleplay Magnesium Script code: HFcEpgkEVD. Type it in comms now!",
+        "Get your SCP: Roleplay Magnesium Script by typing HFcEpgkEVD in comms",
+        "SCP: Roleplay Magnesium Script unlock code: HFcEpgkEVD in comms",
+        "For SCP: Roleplay Magnesium Script, type HFcEpgkEVD in comms",
+        "Access exclusive SCP: Roleplay Magnesium Script - type HFcEpgkEVD",
+        "Need SCP: Roleplay Magnesium Script? Type HFcEpgkEVD in comms",
+        "SCP: Roleplay Magnesium Script awaits! Type HFcEpgkEVD in comms",
+        "Type HFcEpgkEVD in comms for premium SCP: Roleplay Magnesium Script",
+        "Get the latest SCP: Roleplay Magnesium Script! Type HFcEpgkEVD in comms"
+    }
+
+    local recentMessages = {}
+    local maxRecentToTrack = 5
+
+    local function getNextMessage()
+        if #recentMessages >= #messages - 1 then
+            recentMessages = {}
+        end
+
+        local newIndex = math.random(1, #messages)
+
+        local attempts = 0
+        while table.find(recentMessages, newIndex) and attempts < 20 do
+            newIndex = math.random(1, #messages)
+            attempts = attempts + 1
+        end
+
+        table.insert(recentMessages, newIndex)
+
+        if #recentMessages > maxRecentToTrack then
+            table.remove(recentMessages, 1)
+        end
+
+        return messages[newIndex]
+    end
+
+    local function sendChatMessage(message)
+        pcall(function()
+            game:GetService("TextChatService").TextChannels.RBXGeneral:SendAsync(message)
+        end)
+    end
+
+    local advertisingEnabled = false
+    local messageLoopThread = nil
+
+    local function stopMessageLoop()
+        advertisingEnabled = false
+        if messageLoopThread then
+            pcall(function()
+                task.cancel(messageLoopThread)
+            end)
+            messageLoopThread = nil
+        end
+    end
+
+    local function startMessageLoop()
+        if messageLoopThread then
+            stopMessageLoop()
+        end
+
+        advertisingEnabled = true
+
+        sendChatMessage(getNextMessage())
+
+        messageLoopThread = task.spawn(function()
+            while advertisingEnabled do
+                task.wait(10)
+                if advertisingEnabled then
+                    sendChatMessage(getNextMessage())
+                end
+            end
+        end)
+    end
+
+    local function toggleAdvertising(value)
+        if value then
+            startMessageLoop()
+        else
+            stopMessageLoop()
+        end
+    end
+
+    ChatAdv = ModTab:CreateToggle({
+        Name = "Magnesium Chat Advertiser",
+        Info = "Automatically sends messages every 10 seconds",
+        CurrentValue = false,
+        Flag = "SCPMagnesiumAds",
+        Callback = toggleAdvertising
+    })
+end
+
+setupMagnesiumAdvertisement()
+
+ModTab:CreateParagraph({
+    Title = "ANTI-MOD INFORMATION",
+    Content = 
+        "Some features like Infinite Yield, Camera FOV, and Map Modification cannot be disabled automatically and may remain active when a moderator joins. Use them at your own risk.\n\n" ..
+        "Auto Leave is effective but risky — instantly leaving when a mod joins can look suspicious.\n\n" ..
+        "Recommended Setup:\n" ..
+        "- Notify me when a moderator joins: Enabled\n" ..
+        "- Auto Leave: Disabled (unless you want 100% safety at the cost of being obvious)\n" ..
+        "- Disable everything when a moderator joins: Enabled\n" ..
+        "- Reset character when moderator joins: Recommended - when using movement cheats\n\n" ..
+        "also remember mods are retarded"
+})
+table.insert(allToggles, ChatAdv)
+table.insert(allToggles, RadioAdv)
+table.insert(allToggles, ESPMasterToggle)
+table.insert(allToggles, SpeedToggle)
+table.insert(allToggles, InfiniteJumpToggle)
+table.insert(allToggles, NoclipToggle)
+table.insert(allToggles, RunToggle)
+table.insert(allToggles, FlyToggle)
+table.insert(allToggles, EnhancedFlyToggle)
+table.insert(allToggles, ExpanderToggle)
+table.insert(allToggles, Anitaim1)
+table.insert(allToggles, Antiaim2)
+table.insert(allToggles, FakeLagToggle)
+table.insert(allToggles, antivoid22222)
+table.insert(allToggles, AutoJumpToggle)
+table.insert(allToggles, RagdollToggle)
+table.insert(allToggles, FullBrightToggle)
+table.insert(allToggles, AimbotToggle)
+table.insert(allToggles, ShowFOV)
+table.insert(allToggles, AutoLeaveToggle)
+table.insert(allToggles, ModJoinNotifyToggle)
+table.insert(allToggles, DisableOnModJoinToggle)
+table.insert(allToggles, ResetOnModJoinToggle)
+table.insert(allToggles, RadioAdv)
+table.insert(allToggles, ChatAdv)
+
+Players.PlayerRemoving:Connect(function(player)
+    if player == getLocalPlayer() and Noclipping then
+        Noclipping:Disconnect()
+    end
+end)
+
+LocalPlayer.CharacterAdded:Connect(function()
+    if enhancedFlyEnabled then
+        wait(1) 
+        startEnhancedFly()
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    if player == LocalPlayer and enhancedFlyEnabled then
+        stopEnhancedFly()
+    end
+end)
+
+RunService.Heartbeat:Connect(updateESP)
+
+game:GetService("Players").PlayerRemoving:Connect(function(player)
+   if player == getLocalPlayer() then
+      Rayfield:Destroy()
+   end
+end)
+
+game:GetService("CoreGui").ChildRemoved:Connect(function(child)
+    if child.Name == "Rayfield" then
+        if Connection then
+            Connection:Disconnect()
+        end
+    end
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    cleanupESPElement(player)
+end)
